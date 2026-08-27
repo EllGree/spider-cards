@@ -283,11 +283,11 @@ svg.pip{fill:currentColor; stroke:none}
    orientation lock below is attempted first and this is the fallback for the
    browsers that refuse it. */
 #rotate{background:var(--felt-2); z-index:500}
-/* Thinner than the toolbar icons on purpose: this one is drawn several times
-   larger, and a 2-unit stroke at that scale closed the gaps between the three
-   shapes until they read as a single blob. */
-#rotate svg{width:clamp(96px, 34vmin, 190px); height:clamp(96px, 34vmin, 190px);
-            stroke-width:1.6; opacity:.85}
+/* No stroke-width here, on purpose. This icon has a 200-unit viewBox and carries
+   its own weights inline; a CSS override would be read in those units and thin
+   every outline down to a hairline. */
+#rotate svg{width:clamp(120px, 42vmin, 250px); height:clamp(120px, 42vmin, 250px);
+            opacity:.85}
 #rotate.on{display:grid}
 
 /* env() cannot be read back out of a custom property, so the insets are
@@ -764,17 +764,44 @@ const ICON = {
            '<rect x="4" y="16.5" width="16" height="5" rx="1.5"/>',
   lift:    '<rect x="4" y="11.5" width="16" height="9.5" rx="2"/>' +
            '<path d="M12 8.5v-6"/><polyline points="8.5 6 12 2.5 15.5 6"/>',
-  cancel:  '<circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/>',
-  /* The same phone twice, upright then on its side, with an arrow between:
-     an arc curling around one outline turned to mush at any size the overlay
-     actually uses. Both rectangles are 10.4 x 6, so it reads as one object
-     turning rather than two different devices. */
-  rotate:  '<rect x="9" y="0.5" width="6" height="8.5" rx="1.3"/>' +
-           '<path d="M12 12v2.2"/><polyline points="10.2 13.4 12 15.2 13.8 13.4"/>' +
-           '<rect x="6.5" y="18" width="11" height="5.5" rx="1.3"/>'
+  cancel:  '<circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/>'
 };
 
 const ico = n => '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">' + ICON[n] + '</svg>';
+
+/* The one drawing that does not go through ico(). It needs its own viewBox, a
+   mask, and both fill and stroke, none of which the shared helper offers - and
+   it must NOT carry class="ico", whose blanket fill:none would empty the mask
+   and take the phone behind it away with it.
+
+   The mask cuts a gap out of the rear outline exactly where the front one
+   crosses. That gap is the whole trick: with it the two rectangles read as one
+   device caught mid-turn, without it as two phones lying on top of each other. */
+const ROTATE_ICON =
+  '<svg viewBox="0 0 200 200" aria-hidden="true">' +
+    '<defs><mask id="rotate-gap">' +
+      '<rect width="200" height="200" fill="#fff"/>' +
+      '<rect x="13" y="8" width="94" height="169" rx="22" fill="#000"/>' +
+    '</mask></defs>' +
+    '<g mask="url(#rotate-gap)" fill="none" stroke="currentColor" stroke-width="8">' +
+      '<rect x="40" y="95" width="145" height="70" rx="14"/>' +
+      /* x=165, not 156: the notch has to stand off the inner edge by the same 8
+         units as the upright phone's does, or the same cut-out reads as two
+         different ones. Inner edge is 185-4; 181-8 puts the far side at 173. */
+      '<rect x="165" y="117" width="8" height="26" rx="4" fill="currentColor" stroke="none"/>' +
+    '</g>' +
+    '<g fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="round">' +
+      '<rect x="25" y="20" width="70" height="145" rx="14"/>' +
+      '<rect x="47" y="32" width="26" height="8" rx="4" fill="currentColor" stroke="none"/>' +
+      '<line x1="45" y1="152" x2="75" y2="152" stroke-width="4"/>' +
+      /* Head geometry is derived from the curve, not eyeballed: its axis is the
+         tangent at the last control point (3*(P3-P2)), its base is perpendicular
+         to that axis and centred on the curve's end, so the stroke's round cap
+         disappears inside the triangle instead of poking out beside it. */
+      '<path d="M112 35C145 32 171 43 176 70"/>' +
+      '<path d="M179.1 86.7L165.7 71.9L186.3 68.1Z" fill="currentColor" stroke-width="2" stroke-linejoin="round"/>' +
+    '</g>' +
+  '</svg>';
 
 /* ═══════════════════════════════════════════════════════════════════════════
    6. LAYOUT
@@ -1297,7 +1324,7 @@ function toggleHelp(on){
 document.getElementById('keys').addEventListener('click', () => toggleHelp());
 $help.addEventListener('click', () => toggleHelp(false));
 
-$rotate.innerHTML = '<div>' + ico('rotate') + '</div>';
+$rotate.innerHTML = '<div>' + ROTATE_ICON + '</div>';
 
 /* The win sheet closes on a click or any key */
 $msg.addEventListener('click', newGame);
