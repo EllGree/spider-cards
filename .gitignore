@@ -1,0 +1,16 @@
+# Editors
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS cruft
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store
+
+# Scratch
+*.bak
+*.orig
+*.tmp
