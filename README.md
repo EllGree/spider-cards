@@ -1,15 +1,21 @@
 # Spider
 
-Spider solitaire in a single HTML file. No build step, no dependencies, no network:
-open `spider.html` and play.
+Spider solitaire in a single HTML file. No build step, no dependencies, no network.
+
+**[Play it here](https://ellgree.github.io/spider-cards/)** — or download the file
+and open it, which works just as well.
 
 ![The table mid-game](screenshot.webp)
 
 ## Play
 
-Double-click `spider.html`. That is the whole installation procedure — the file
-carries its own card artwork, so it works from a USB stick, an e-mail attachment
-or a `file://` URL with nothing beside it.
+Download `index.html` and double-click it. That is the whole installation
+procedure — the file carries its own card artwork, so it works from a USB stick,
+an e-mail attachment or a `file://` URL with nothing beside it.
+
+(The file is named `index.html` rather than `spider.html` so that GitHub Pages
+serves it at the address above. Rename it to anything you like once it is on your
+disk; nothing inside depends on the name.)
 
 ## Rules
 
