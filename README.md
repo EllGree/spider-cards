@@ -105,4 +105,5 @@ Everything else — the icons included — is drawn for this project.
 
 ## Licence
 
-MIT, see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE). The bundled card deck is public domain and is
+credited separately in [NOTICE](NOTICE).

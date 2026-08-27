@@ -1,0 +1,18 @@
+Third-party material bundled with this project
+==============================================
+
+Card faces and backs
+--------------------
+The 54 card images embedded in index.html (the <style id="deck"> block) are the
+SVG playing cards by Adrian Kennard (RevK), dedicated to the public domain under
+CC0 1.0 Universal.
+
+    Home:   https://www.me.uk/cards
+    Source: https://codeberg.org/RevK/SVG-playing-cards
+
+CC0 requires no attribution; this notice is here because the deck earned it. The
+author does ask, without requiring it, that the link he embeds in the ace of
+spades be left intact. It has been removed from this copy, which CC0 permits.
+
+Everything else in this repository, the interface icons included, is original
+work covered by the MIT licence in LICENSE.
