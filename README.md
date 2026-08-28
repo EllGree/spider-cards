@@ -116,6 +116,11 @@ blank middle of a card, while a smaller card costs the artwork.
 State lives in one object that the DOM is drawn from and never read back into, which
 is what makes undo a snapshot instead of an inverse operation per move type.
 
+Cards move by FLIP: since every render throws the board away and builds a new one,
+each card carries an id from the deal, and the animation measures where each id was,
+lets the rebuild happen, measures again, and plays the difference. Only transforms
+are animated, never layout. `prefers-reduced-motion` turns the whole thing off.
+
 ## Credits
 
 Card faces and backs are the **SVG playing cards by Adrian Kennard (RevK)**, released

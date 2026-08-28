@@ -267,6 +267,17 @@ svg.pip{fill:currentColor; stroke:none}
 }
 .pile.cursor{outline:none}
 
+/* A card in flight has to clear the columns it passes over. Piles are
+   position:relative with z-index auto, so they open no stacking context and a
+   card raised inside one is compared against the others directly. Above the
+   stock, below the toolbar and the sheets. */
+.card.flying{z-index:100}
+
+/* Where a collected run goes to die: fixed, inert, above the table and under
+   everything that can be clicked. */
+#fly{position:fixed; inset:0; pointer-events:none; z-index:120}
+#fly .card{position:fixed}
+
 /* Layer the drag ghost floats in */
 #drag{position:fixed; left:0; top:0; pointer-events:none; z-index:300}
 #drag .card{position:absolute; box-shadow:0 10px 26px rgba(0,0,0,.45)}
@@ -498,6 +509,7 @@ svg.pip{fill:currentColor; stroke:none}
 <div id="board"></div>
 <div id="stock" title="Deal a row (Space)" aria-label="Deal a row from the stock"></div>
 
+<div id="fly"></div>
 <div id="drag"></div>
 <div id="msg" class="sheet"></div>
 <div id="help" class="sheet" role="dialog" aria-label="Keyboard map"></div>
@@ -550,13 +562,19 @@ let serial = 0;           // bumped by any change of position; invalidates the h
      1 suit  -> 8 copies of A..K of spades
      2 suits -> 4 copies each of spades and hearts
      4 suits -> 2 copies of every suit                                      */
+/* Each card carries an id for the whole game. render() rebuilds the board from
+   nothing every time, so the element a card lives in before a move and the one
+   it lives in after are different objects, and the animation needs to know they
+   are the same card. structuredClone keeps the id, so undo keeps it too. */
+let uid = 0;
+
 function deal(suits){
   const deck = [];
   const copies = 8 / suits;
   for (let s = 0; s < suits; s++)
     for (let c = 0; c < copies; c++)
       for (let r = 1; r <= 13; r++)
-        deck.push({r, s, up:false});
+        deck.push({r, s, up:false, id: 'c' + (++uid)});
 
   shuffle(deck);
 
@@ -658,6 +676,10 @@ function applyMove(from, idx, to){
 
 function dealStock(){
   if (!canDealStock(state)) return false;
+  /* Ten cards about to appear out of nothing. Note where the stock is now, so
+     the animation has somewhere to fly them in from. */
+  const r = $stock.getBoundingClientRect();
+  spawnAt = {x: r.left, y: r.top};
   push();
   const row = state.stock.pop();
   for (let i = 0; i < PILES; i++){
@@ -1034,6 +1056,7 @@ const $over   = document.getElementById('over');
 const $book   = document.getElementById('rulebook');
 const $rotate = document.getElementById('rotate');
 const $safe   = document.getElementById('safe');
+const $fly    = document.getElementById('fly');
 const $drag   = document.getElementById('drag');
 const $undo   = document.getElementById('undo');
 const $hint   = document.getElementById('hint');
@@ -1046,6 +1069,7 @@ const $hint   = document.getElementById('hint');
 function cardEl(c){
   const el = document.createElement('div');
   el.className = 'card c-' + cardFace(c) + (c.up ? '' : ' down');
+  if (c.id) el.dataset.id = c.id;      // stock backs are anonymous and never fly
   return el;
 }
 
@@ -1071,6 +1095,125 @@ function pileSteps(pile){
   const steps = [];
   for (let i = 1; i < pile.length; i++) steps.push(pile[i - 1].up ? L.open : L.down);
   return steps;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ANIMATION
+   ───────────────────────────────────────────────────────────────────────────
+   FLIP, and nothing cleverer than that. Measure where every card is, let
+   render() throw the board away and build a new one, measure again, then put
+   each card back where it started with a transform and take the transform off.
+   The browser animates the difference. Only transforms move, never layout, so
+   a hundred cards at once cost the compositor and nothing else.
+
+   Three cases, all falling out of the same machinery:
+     a card that was somewhere else  -> it flies from there;
+     a card that was nowhere         -> it flies from the stock, if a deal put
+                                        it on the table, and otherwise appears;
+     a card that is nowhere now      -> a completed run, so a copy of it flies
+                                        off to the slot it filled.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+const MOTION = !matchMedia('(prefers-reduced-motion: reduce)').matches;
+const MOVE_MS = 190, DEAL_STEP_MS = 24, COLLECT_MS = 360;
+const EASE = 'cubic-bezier(.2,.7,.3,1)';
+
+let drawnSerial = -1, drawnDone = 0;
+let spawnAt = null;        // origin for cards that were not on the table before
+
+/** Where every card is right now, by id. Cards hidden under a drag are skipped
+    so that their ghost in #drag is what gets measured instead - a dropped run
+    then flies the last few pixels from the finger, not the whole way back from
+    the column it came out of. */
+function snapshot(){
+  const map = new Map();
+  for (const el of document.querySelectorAll('.card[data-id]')){
+    if (el.style.visibility === 'hidden') continue;
+    const r = el.getBoundingClientRect();
+    map.set(el.dataset.id, {x: r.left, y: r.top, w: r.width, h: r.height, cls: el.className});
+  }
+  return map;
+}
+
+/** A copy of a card that has left the table, flying to the slot it completed. */
+function sendOff(was, target, delay){
+  const ghost = document.createElement('div');
+  /* Strip the table's markers - a card on its way out is not selected, hinted
+     or anything else. Split and filter rather than a regex: an escape in the
+     patch that wrote this file turned a word-boundary escape into a literal
+     backspace once already. */
+  const MARKS = ['sel','drop','hint','weak','target','cursor','movable','flying'];
+  ghost.className = was.cls.split(' ').filter(c => c && !MARKS.includes(c)).join(' ');
+  ghost.style.cssText =
+    'left:' + was.x + 'px; top:' + was.y + 'px;' +
+    'width:' + was.w + 'px; height:' + was.h + 'px;' +
+    'transition:transform ' + COLLECT_MS + 'ms ' + EASE + ', opacity ' + COLLECT_MS + 'ms ease-in;' +
+    'transition-delay:' + delay + 'ms;';
+  $fly.appendChild(ghost);
+  requestAnimationFrame(() => {
+    ghost.style.transform = target
+      ? 'translate(' + (target.x - was.x) + 'px,' + (target.y - was.y) + 'px) scale(.18)'
+      : 'scale(.9)';
+    ghost.style.opacity = '0';
+  });
+  setTimeout(() => ghost.remove(), COLLECT_MS + delay + 60);
+}
+
+/** Play the difference between `before` and the board as it now stands.
+
+    `translate` is false when the cards changed size on this render - a column
+    grew or shrank past what the window holds. FLIP only translates, so sliding
+    cards of a new size in from old positions would look wrong, and the board is
+    left to snap. The send-off is unaffected either way: those are loose copies
+    at the size they had, and the board's new layout has no say over them. */
+function flip(before, translate){
+  const live = [...$board.querySelectorAll('.card[data-id]')];
+  const seen = new Set(live.map(el => el.dataset.id));
+
+  /* Read every rect before writing any style: interleaving the two would make
+     the browser re-lay-out the whole board once per card. */
+  const moves = [];
+  const rects = translate ? live.map(el => el.getBoundingClientRect()) : [];
+  if (translate) live.forEach((el, i) => {
+    const id = el.dataset.id;
+    const fresh = !before.has(id);
+    const was = before.get(id) || (fresh ? spawnAt : null);
+    if (!was) return;
+    const dx = was.x - rects[i].left, dy = was.y - rects[i].top;
+    if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
+    moves.push({el, dx, dy, delay: fresh ? (+el.dataset.pile || 0) * DEAL_STEP_MS : 0});
+  });
+
+  for (const m of moves){
+    m.el.classList.add('flying');
+    m.el.style.transition = 'none';
+    m.el.style.transform = 'translate(' + m.dx + 'px,' + m.dy + 'px)';
+  }
+  if (moves.length) requestAnimationFrame(() => {
+    for (const m of moves){
+      m.el.style.transition = 'transform ' + MOVE_MS + 'ms ' + EASE;
+      m.el.style.transitionDelay = m.delay + 'ms';
+      m.el.style.transform = '';
+    }
+  });
+  const last = moves.reduce((a, m) => Math.max(a, m.delay), 0);
+  setTimeout(() => {
+    for (const m of moves)
+      if (m.el.isConnected){ m.el.classList.remove('flying'); m.el.style.transition = ''; }
+  }, MOVE_MS + last + 60);
+
+  /* Cards that were on the table and are not any more. Only a completed run
+     leaves like that - undoing a deal also removes cards, so the run counter
+     has to agree before anything is sent off. */
+  if (state.done.length > drawnDone){
+    const slot = $done.children[state.done.length - 1];
+    const box = slot && slot.offsetParent ? slot.getBoundingClientRect() : null;
+    const target = box ? {x: box.left, y: box.top} : null;
+    let k = 0;
+    for (const [id, was] of before)
+      if (!seen.has(id)) sendOff(was, target, (k++) * 12);
+  }
+  spawnAt = null;
 }
 
 /** Is the game actually stuck? Legality only - scoreMove()'s idea of a
@@ -1099,7 +1242,17 @@ function clampCursor(){
   cursor.idx = n ? Math.min(cursor.idx < 0 ? n - 1 : cursor.idx, n - 1) : -1;
 }
 
-function render(){
+/* `before` is only passed in from the drop handler, which has to take its
+   measurement while the drag ghost is still on screen. Everywhere else render()
+   takes its own, of the board as the previous position left it. */
+function render(before){
+  /* Animate only when the position actually changed. A resize also moves every
+     card on screen, and watching the whole table glide about because a window
+     edge was dragged is not a feature. */
+  const play = MOTION && serial !== drawnSerial;
+  if (play && !before) before = snapshot();
+  const wasW = L.cardW;
+
   fit();
   clampCursor();
 
@@ -1168,6 +1321,14 @@ function render(){
   /* Shown once per position: dismiss it and it stays dismissed until something
      moves, so it cannot nag while you look the table over. */
   $over.classList.toggle('on', deadSeen !== serial && isDeadEnd());
+
+  /* A run leaving the table takes thirteen cards out of a column, which can be
+     enough to resize every card on the board. That is why the size test only
+     switches off the sliding, not the whole animation - the send-off has to
+     survive exactly the move that most often triggers it. */
+  if (play) flip(before, Math.abs(L.cardW - wasW) < wasW * 0.02); else spawnAt = null;
+  drawnSerial = serial;
+  drawnDone = state.done.length;
 }
 
 let deadSeen = -1;                       // serial whose dead end has been dismissed
@@ -1290,15 +1451,20 @@ $board.addEventListener('pointercancel', () => {
 $board.addEventListener('pointerup', e => {
   if (!drag) return;
   const d = drag; drag = null;
-  $drag.innerHTML = '';
 
-  if (!d.moved){ click(d.from, d.idx); return; }
+  if (!d.moved){ $drag.innerHTML = ''; click(d.from, d.idx); return; }
+
+  /* Measured with the ghost still up and the originals still hidden, so the run
+     flies the last inch from the finger instead of teleporting back to its old
+     column and setting off from there. */
+  const before = MOTION ? snapshot() : null;
+  $drag.innerHTML = '';
 
   const to = pileUnder(e.clientX);
   if (to === null || !move(d.from, d.idx, to)) { render(); refuse(d.from, d.idx); return; }
   selection = null;
   cursor = {pile: to, idx: state.tableau[to].length - 1};
-  render();
+  render(before);
 });
 
 /** Shake the run that was just refused, so "not allowed" cannot be mistaken
