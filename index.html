@@ -209,6 +209,27 @@ svg.pip{fill:currentColor; stroke:none}
 .card.sel{outline:2px solid var(--pick); outline-offset:-2px}
 .card.sel::after{background:rgba(255,212,121,.40)}
 
+/* Where the run in hand may legally land. Quieter than .target, which the hint
+   uses to point at one particular column: this lights every column that would
+   accept the cards, so it has to sit in the background and be countable at a
+   glance rather than shouted. Same green either way - green means "here". */
+.card.drop, .pile.drop{
+  outline:2px dashed rgba(126,224,163,.75); outline-offset:2px;
+  border-radius:var(--card-radius);
+}
+.card.drop::after{
+  content:""; position:absolute; inset:0;
+  border-radius:inherit; background:rgba(126,224,163,.16);
+}
+
+/* A refused move used to be silent: the run simply reappeared where it came
+   from, which is indistinguishable from a drag that broke. The card shakes its
+   head instead. Transform is free to use - cards are placed with left/top. */
+.card.refused{animation:refuse .28s ease-in-out}
+@keyframes refuse{
+  20%{transform:translateX(-5px)} 60%{transform:translateX(5px)} 100%{transform:none}
+}
+
 .card.target, .pile.target, #stock.target{
   outline:2px dashed var(--goal); outline-offset:2px;
   border-radius:var(--card-radius);
@@ -940,6 +961,21 @@ function cardEl(c){
   return el;
 }
 
+/* Light up every column that would accept the run being held. The rule this
+   makes visible is the one nobody guesses: a run is taken only if it descends
+   in ONE suit, but it may be dropped on any suit one rank higher. Without it a
+   refused move and a broken game look the same, which is exactly how it was
+   reported. */
+function markDrops(from, idx){
+  const head = state.tableau[from][idx];
+  for (let to = 0; to < PILES; to++){
+    if (to === from || !canDrop(state, head, to)) continue;
+    const col = $board.children[to];
+    const cards = col.querySelectorAll('.card');
+    (cards.length ? cards[cards.length - 1] : col).classList.add('drop');
+  }
+}
+
 /* Cascade offsets for one column: the shift BEFORE each card starting from
    the second, so steps.length === pile.length - 1. fit() has already made
    sure the total will fit, so there is nothing to clamp here. */
@@ -1011,6 +1047,8 @@ function render(){
     }
     $done.appendChild(slot);
   }
+
+  if (selection) markDrops(selection.pile, selection.idx);
 
   $undo.disabled = history.length === 0;
   if (hintSerial !== serial) setHint('bulb', '', '');
@@ -1119,6 +1157,7 @@ $board.addEventListener('pointermove', e => {
       if (+el.dataset.pile === drag.from && +el.dataset.idx >= drag.idx)
         el.style.visibility = 'hidden';
     });
+    markDrops(drag.from, drag.idx);
   }
   $drag.style.transform =
     'translate(' + (e.clientX - drag.dx) + 'px,' + (e.clientY - drag.dy) + 'px)';
@@ -1144,11 +1183,18 @@ $board.addEventListener('pointerup', e => {
   if (!d.moved){ click(d.from, d.idx); return; }
 
   const to = pileUnder(e.clientX);
-  if (to === null || !move(d.from, d.idx, to)) { render(); return; }
+  if (to === null || !move(d.from, d.idx, to)) { render(); refuse(d.from, d.idx); return; }
   selection = null;
   cursor = {pile: to, idx: state.tableau[to].length - 1};
   render();
 });
+
+/** Shake the run that was just refused, so "not allowed" cannot be mistaken
+    for "the game stopped responding". Runs after render(), on the fresh nodes. */
+function refuse(p, idx){
+  const col = $board.children[p];
+  for (let i = idx; i < col.children.length; i++) col.children[i].classList.add('refused');
+}
 
 /** Which column a release belongs to. Columns are narrow and never overlap, so
     x alone decides.

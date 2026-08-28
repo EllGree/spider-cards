@@ -22,14 +22,21 @@ disk; nothing inside depends on the name.)
 Two full decks, 104 cards, dealt into ten columns.
 
 - **Take** a descending run of a *single* suit — `♠9 ♠8 ♠7` moves as one, `♠9 ♥8 ♠7`
-  does not.
+  does not. This is the rule everyone trips over, including people who have played
+  Klondike for years: there, suits alternate; here, taking needs one suit and
+  putting ignores suit entirely.
 - **Put** it on any card one rank higher, *suit ignored*, or into an empty column.
 - **Deal** a row of ten from the stock — but only while every column has a card in
   it. This rule is the one people forget, and skipping it makes deals unwinnable.
 - A complete `K → A` run of one suit leaves the table. Clear all eight and you win.
 
 The suit picker chooses the difficulty: one suit is a gentle puzzle, four suits is
-the real game.
+the real game. Start at one suit — every descending run is then a single suit by
+definition, so runs always move and the rule above never gets in the way.
+
+You do not have to hold any of this in your head, though. Pick a run up and every
+column it may legally land in lights up; if nothing lights up, that run has
+nowhere to go in this position.
 
 ## Controls
 
@@ -60,6 +67,8 @@ The interface has no words in it, so here is what the marks mean.
 | green fill, solid outline | the hint's suggested move |
 | green fill, dashed outline | where it wants to go |
 | violet fill | a legal move that gains you nothing |
+| green dashed outline, faint fill | every column the run in your hand may go to |
+| a card shaking its head | the move was refused, not lost |
 | blue ring | where the keyboard cursor is |
 
 The hint button is also the state light: a bulb with a counter while moves exist, an
