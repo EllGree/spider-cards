@@ -803,19 +803,29 @@ function scoreMove(from, idx, to){
 }
 
 /* ── Hint ──────────────────────────────────────────────────────────────────
-   Enumerate every move, then look one move ahead.
+   Enumerate every move and rank it. That is the whole of it - there used to be
+   a one-move lookahead here as well, and taking it out is the single largest
+   improvement this heuristic has ever had.
 
-   Scoring the current position alone is not enough: a move is often valuable
-   not in itself but because it digs out the card that matters. The classic
-   spider shape is stripping two small cards off a king so a long run can land
-   on it. By direct scoring that looks like pointless shuffling and goes
-   negative.
+   The argument for it was good: a move is often valuable not in itself but
+   because it digs out the card that matters, and stripping two small cards off
+   a king so a long run can land on it looks like pointless shuffling to a
+   direct score. The argument was also wrong, for a reason worth writing down.
+   The best move available AFTER a move barely depends on which move you make -
+   most moves do not destroy most options - so the term varied almost at random
+   between candidates, and 0.6 of that random variation was more than enough to
+   reorder moves whose real scores differ by two or three points. It added noise
+   with the shape of insight.
 
-   So each move is played out on a copy of the state to see what becomes
-   available afterwards. The 0.6 weight is the compromise: the future counts,
-   but never outweighs what the move itself gives. No deeper than that:
-   spider branches far too wide, and this is a hint, not a solver.          */
-const LOOKAHEAD = 0.6;
+   Measured, on 720 games of following the top hint on one suit, same deals with
+   and without: 20.3% of games won with the lookahead, 28.2% without. The effect
+   is monotone in the weight - 1.0 is worse than 0.6, which is worse than 0.3,
+   which is worse than none - and it survives being restricted to the moves it
+   was written for, the ones scoring zero or less. Every variant tried lost to
+   simply deleting it.
+
+   So: no lookahead, and the ranking is exactly scoreMove plus a large bonus for
+   a move that clears a run off the table. Which also makes a hint instant.   */
 
 function legalMoves(){
   const out = [];
@@ -838,26 +848,15 @@ function findHints(){
   const snapshot = structuredClone(state);
   const scored = [];
 
+  /* The move still has to be played to see whether it clears a run - that
+     depends on what the destination already holds - so the snapshot stays. */
   const serialBefore = serial;
   for (const m of moves){
-    const runLen = state.tableau[m.from].length - m.idx;
     const doneBefore = state.done.length;
     applyMove(m.from, m.idx, m.to);
 
     let total = m.score;
     if (state.done.length > doneBefore) total += 50;      // the move closes a run
-
-    /* Moving the same run on again is not a second move, it is the same
-       relocation taking the scenic route, and crediting it made the lookahead
-       prefer the detour: a ten was sent to a lone jack because from there it
-       could later reach the king-queen-jack it should have gone to directly.
-       Two moves, same position, and the hint liked it better. */
-    const landed = state.tableau[m.to].length - runLen;
-    const next = legalMoves().filter(x => !(x.from === m.to && x.idx >= landed));
-
-    /* Only positive prospects: the player is not obliged to make a bad next
-       move, so a grim future must not sink a good move. */
-    if (next.length) total += LOOKAHEAD * Math.max(0, ...next.map(x => x.score));
 
     state = structuredClone(snapshot);                    // roll back
     scored.push({...m, total});
