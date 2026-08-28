@@ -32,6 +32,7 @@
   --gap: 11px;
   --step-open: 31px;      /* cascade step below a face-up card */
   --step-down: 7px;       /* ...and below a face-down one */
+  --stock-lane: 11px;     /* width kept clear on the right for the stock */
 
   /* Derived, and safe to keep in CSS: they depend on the card only. */
   --radius: calc(var(--card-w) * 0.09);
@@ -187,15 +188,12 @@ svg.pip{fill:currentColor; stroke:none}
   display:flex; gap:var(--gap);
   justify-content:center;
   padding:0 calc(var(--gap) + var(--safe-r)) 0 calc(var(--gap) + var(--safe-l));
-  /* The stock sits fixed in the bottom-right corner. Once fit() lets a column
-     run the full height of the screen, that corner is no longer free, so the
-     board gives the stock a lane of its own instead of growing into it. The
-     lane is 1.55 cards wide: the card, its margin, the fan of backs spreading
-     inwards from it, and a tenth of a card of daylight. Without that last part
-     the gap came out at two pixels on a small screen with a full stock, which
-     is close enough to touching that any rounding closes it. Keep in step with
-     STOCK_R in the script. */
-  padding-right:calc(var(--card-w) * 1.55 + var(--safe-r));
+  /* The stock sits fixed in the bottom-right corner, so when a column can grow
+     down beside it the board keeps a lane clear instead of growing into it -
+     1.55 cards: the card, its margin, the fan of backs spreading inwards, and a
+     tenth of a card of daylight. Whether the lane is needed at all is fit()'s
+     call, and it writes the answer here. */
+  padding-right:calc(var(--stock-lane) + var(--safe-r));
   touch-action:none;
 }
 .pile{
@@ -348,15 +346,10 @@ svg.pip{fill:currentColor; stroke:none}
   /* 16 and not 20: on a phone in landscape those eight pixels were the whole
      difference between the sheet fitting and the sheet scrolling. */
   padding:16px 22px;
-  max-height:100%; overflow:auto;
-  touch-action:pan-y;
   /* Needs a width of its own: the sheet centres its child, so the child shrinks
      to its contents, and auto-fit with nothing to fill collapses to one column
      no matter how much room the screen has. */
-  /* Wide enough to lay all three panels in a row when the screen allows it. A
-     phone in landscape has width to spare and no height at all, and the sheet
-     was making it scroll for want of using the room beside it. */
-  width:min(100%, 640px);
+  /* No width here: fitSheet() picks one, then scales the result to the window. */
   display:grid; grid-template-columns:repeat(auto-fit, minmax(130px, 1fr));
   gap:18px 22px; justify-items:center; align-items:end;
 }
@@ -392,8 +385,6 @@ svg.pip{fill:currentColor; stroke:none}
   background:rgba(20,40,30,.94);
   border:1px solid rgba(255,255,255,.16); border-radius:14px;
   padding:18px 20px;
-  max-height:100%; overflow:auto;
-  touch-action:pan-y;              /* body is touch-action:none; let this one scroll */
   display:grid; grid-template-columns:auto auto; gap:10px 22px;
   align-items:center;
 }
@@ -1029,43 +1020,68 @@ function fit(){
   for (const s of shape)
     capH = Math.min(capH, (avail - s.down * DOWN_MIN - s.up * OPEN_MIN) / ASPECT);
 
-  /* Ten columns, nine gaps between them, one gap of padding on the left and
-     the stock's lane on the right - all measured in card widths. */
-  const room = innerWidth - $safe.offsetWidth;
-  const capW = room / (PILES + (PILES - 1) * GAP_R + GAP_R + STOCK_R);
+  /* Everything a given card width implies: the steps, and how far the tallest
+     column then reaches. */
+  const layout = cardW => {
+    const cardH = cardW * ASPECT;
+    const openFull = cardH * OPEN_R, downFull = cardH * DOWN_R;
+    const openMin  = Math.min(OPEN_MIN, openFull);        // never above the natural step
+    const downMin  = Math.min(DOWN_MIN, downFull);
 
-  const cardW = Math.max(CARD_MIN, Math.min(CARD_MAX, capW, capH));
-  const cardH = cardW * ASPECT;
+    /* Column height is linear in t, where t=0 is the floor and t=1 the full
+       step, so the largest t every column tolerates is one division - there is
+       nothing here to search for. */
+    let t = 1;
+    for (const s of shape){
+      const base  = cardH + s.down * downMin + s.up * openMin;
+      const slope = s.down * (downFull - downMin) + s.up * (openFull - openMin);
+      if (slope > 0) t = Math.min(t, (avail - base) / slope);
+    }
+    t = Math.max(0, Math.min(1, t));
 
-  const openFull = cardH * OPEN_R, downFull = cardH * DOWN_R;
-  const openMin  = Math.min(OPEN_MIN, openFull);          // never above the natural step
-  const downMin  = Math.min(DOWN_MIN, downFull);
+    let open = openMin + (openFull - openMin) * t;
+    let down = downMin + (downFull - downMin) * t;
+    const reach = () => Math.max(...shape.map(s => cardH + s.down * down + s.up * open));
 
-  /* Column height is linear in t, where t=0 is the floor and t=1 the full
-     step, so the largest t every column tolerates is one division - there is
-     nothing here to search for. */
-  let t = 1;
-  for (const s of shape){
-    const base  = cardH + s.down * downMin + s.up * openMin;
-    const slope = s.down * (downFull - downMin) + s.up * (openFull - openMin);
-    if (slope > 0) t = Math.min(t, (avail - base) / slope);
+    /* Last resort: the card is already at CARD_MIN and a column still spills.
+       Squeeze past the readable floor anyway - an unreadable step is bad, a
+       column vanishing off the bottom edge is worse. */
+    if (reach() > avail && reach() > cardH){
+      const k = Math.max(0, avail - cardH) / (reach() - cardH);
+      open *= k; down *= k;
+    }
+    return {cardW, cardH, open, down, tallest: reach()};
+  };
+
+  /* Ten columns, nine gaps between them and one gap of padding on the left -
+     and then, on the right, either the stock's lane or just another gap. */
+  const room  = innerWidth - $safe.offsetWidth;
+  const lanes = PILES + (PILES - 1) * GAP_R + GAP_R;
+  const at = lane => layout(Math.max(CARD_MIN,
+                     Math.min(CARD_MAX, room / (lanes + lane), capH)));
+
+  /* The stock's lane is only in the way when a column grows down beside it. A
+     phone held upright has its columns finishing near the top and the stock
+     sitting alone at the bottom with the whole table between them: reserving a
+     card and a half of width there buys nothing and is paid for in the one
+     place with no width to spare. So lay out without the lane, and put it back
+     only if something actually reaches. */
+  let lane = GAP_R;
+  let m = at(lane);
+  /* Where the stock actually starts, which is above its own box: the backs fan
+     upwards as well as inwards, one row at a time. Measuring to the box alone
+     let a column brush the top of the fan. AIR keeps the two from touching at
+     the boundary. */
+  const fan = Math.max(0, state.stock.length - 1) * 0.022;
+  if (state.stock.length &&
+      top + m.tallest + AIR > innerHeight - safeB - m.cardW * (0.22 + fan) - m.cardH){
+    lane = STOCK_R;
+    m = at(lane);
   }
-  t = Math.max(0, Math.min(1, t));
 
-  let open = openMin + (openFull - openMin) * t;
-  let down = downMin + (downFull - downMin) * t;
-
-  /* Last resort: the card is already at CARD_MIN and a column still spills.
-     Squeeze past the readable floor anyway - an unreadable step is bad, a
-     column vanishing off the bottom edge is worse. */
-  const tallest = Math.max(...shape.map(s => cardH + s.down * down + s.up * open));
-  if (tallest > avail && tallest > cardH){
-    const k = Math.max(0, avail - cardH) / (tallest - cardH);
-    open *= k; down *= k;
-  }
-
+  const {cardW, cardH, open, down} = m;
   L.cardW = cardW; L.cardH = cardH; L.gap = cardW * GAP_R;
-  L.open = open;   L.down = down;
+  L.open = open;   L.down = down;   L.lane = cardW * lane;
 
   const css = document.documentElement.style;
   css.setProperty('--card-w', cardW + 'px');
@@ -1073,6 +1089,7 @@ function fit(){
   css.setProperty('--gap', L.gap + 'px');
   css.setProperty('--step-open', open + 'px');
   css.setProperty('--step-down', down + 'px');
+  css.setProperty('--stock-lane', L.lane + 'px');
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1390,7 +1407,10 @@ let deadSeen = -1;                       // serial whose dead end has been dismi
 let resizeTimer = null;
 function relayout(){
   clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(() => { if (state) render(); }, 60);
+  resizeTimer = setTimeout(() => {
+    if (state) render();
+    fitSheet($book); fitSheet($help);     // an open sheet follows the window
+  }, 60);
 }
 addEventListener('resize', relayout);
 addEventListener('orientationchange', relayout);
@@ -1832,7 +1852,19 @@ function autoStep(){
      falls into is only two moves long. The interface already calls those moves
      out in violet; there is no reason to watch the game make them. */
   const h = findHints();
-  if (h.length && h[0].total > 0) move(h[0].from, h[0].idx, h[0].to);
+  let m = h.length && h[0].total > 0 ? h[0] : null;
+
+  /* An empty column is not only a resource, it is also a lock: no deal while
+     one stands open. So with nothing worth playing and rows still in the stock,
+     fill an empty column - the least bad way of doing it. That is not a good
+     move and it does not score like one, it is simply the price of the deal,
+     and a player pays it without thinking. Left out, the game stopped dead in
+     front of a full stock it was not allowed to touch. */
+  if (!m && state.stock.length && !canDealStock(state))
+    m = h.filter(x => !state.tableau[x.to].length)
+         .sort((a, b) => b.total - a.total)[0] || null;
+
+  if (m) move(m.from, m.idx, m.to);
   else if (canDealStock(state)) dealStock();
   else { autoStop(); render(); return; }
 
@@ -1911,6 +1943,7 @@ $help.innerHTML = '<div>' + KEYMAP.map(([keys, name]) =>
 
 function toggleHelp(on){
   $help.classList.toggle('on', on === undefined ? !$help.classList.contains('on') : on);
+  fitSheet($help);
 }
 document.getElementById('keys').addEventListener('click', () => toggleHelp());
 $help.addEventListener('click', () => toggleHelp(false));
@@ -1976,8 +2009,46 @@ $book.innerHTML = '<div>' +
   '</span>' +
   '</div>';
 
+/* Both sheets are laid out at whatever size their content asks for and then
+   scaled to fill the window. One transform does the lot - cards, icons, rules,
+   type, borders - so nothing has to be expressed in viewport units and no line
+   of text re-wraps on the way, which is what would happen if the font size were
+   driven directly. The ceiling stops the key map, which is small, from being
+   blown up to billboard size on a desktop. */
+const SHEET_FILL = 0.94, SHEET_MAX = 2.6;
+
+/* Scaling alone only fills the window in one direction: whichever of the two
+   runs out first. The rules sheet has a say in that, because its grid reflows -
+   laid out narrow it comes out tall, laid out wide it comes out short - so the
+   width to lay it out at is chosen by trying a few and keeping whichever ends
+   up covering the most screen once scaled. Six measurements when a sheet opens
+   costs nothing. The key map has no such freedom, so it is measured as it is. */
+const SHEET_WIDTHS = ['300px', '380px', '480px', '600px', '760px', '940px'];
+
+function fitSheet(sheet){
+  const box = sheet.firstElementChild;
+  if (!box || !sheet.classList.contains('on')) return;
+  const roomW = SHEET_FILL * (innerWidth  - $safe.offsetWidth);
+  const roomH = SHEET_FILL * (innerHeight - $safe.offsetHeight);
+
+  let best = null;
+  for (const w of (sheet === $book ? SHEET_WIDTHS : [''])){
+    box.style.transform = 'none';
+    box.style.width = w;
+    const r = box.getBoundingClientRect();
+    if (!r.width || !r.height) continue;
+    const k = Math.min(roomW / r.width, roomH / r.height, SHEET_MAX);
+    const covered = k * r.width * k * r.height;
+    if (!best || covered > best.covered) best = {w, k, covered};
+  }
+  if (!best) return;
+  box.style.width = best.w;
+  box.style.transform = 'scale(' + best.k.toFixed(3) + ')';
+}
+
 function toggleBook(on){
   $book.classList.toggle('on', on === undefined ? !$book.classList.contains('on') : on);
+  fitSheet($book);
 }
 document.getElementById('rules').innerHTML = ico('rules');
 document.getElementById('rules').addEventListener('click', () => toggleBook());

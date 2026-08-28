@@ -108,6 +108,11 @@ price of a game you can send to someone as a single attachment, and it seemed wo
 paying. The hand-written part is the ~150 lines of CSS above it and ~950 lines of
 JavaScript below.
 
+The stock keeps a lane of clear width on the right, but only while a column can
+actually grow down beside it — held upright, the columns finish near the top and
+the stock sits alone at the bottom, so the lane is dropped and the cards get the
+width instead.
+
 The layout has one hard promise: **the table always fits the window.** No scrolling,
 no column running off the bottom edge, whatever the deal and whatever the window
 size. A single function, `fit()`, is allowed two dials and pulls them in order —
