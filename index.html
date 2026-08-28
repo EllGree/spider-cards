@@ -285,7 +285,10 @@ svg.pip{fill:currentColor; stroke:none}
 
 /* Layer the drag ghost floats in */
 #drag{position:fixed; left:0; top:0; pointer-events:none; z-index:300}
-#drag .card{position:absolute; box-shadow:0 10px 26px rgba(0,0,0,.45)}
+/* A lifted run is above the table, so it looks it: a touch larger, its shadow
+   further away. The scale is on the layer, around the point the finger holds,
+   so the card grows about the finger and does not slip out from under it. */
+#drag .card{position:absolute; box-shadow:0 18px 42px rgba(0,0,0,.5)}
 
 /* ── Stock ─────────────────────────────────────────────────────────────── */
 #stock{
@@ -1235,28 +1238,36 @@ function sendOff(list, target){
     cards of a new size in from old positions would look wrong, and the board is
     left to snap. The send-off is unaffected either way: those are loose copies
     at the size they had, and the board's new layout has no say over them. */
-function flip(before, translate){
+function flip(before){
   const live = [...$board.querySelectorAll('.card[data-id]')];
   const seen = new Set(live.map(el => el.dataset.id));
 
   /* Read every rect before writing any style: interleaving the two would make
      the browser re-lay-out the whole board once per card. */
   const moves = [];
-  const rects = translate ? live.map(el => el.getBoundingClientRect()) : [];
-  if (translate) live.forEach((el, i) => {
+  const rects = live.map(el => el.getBoundingClientRect());
+  live.forEach((el, i) => {
     const id = el.dataset.id;
     const fresh = !before.has(id);
     const was = before.get(id) || (fresh ? spawnAt : null);
     if (!was) return;
-    const dx = was.x - rects[i].left, dy = was.y - rects[i].top;
-    if (Math.abs(dx) < 1 && Math.abs(dy) < 1) return;
-    moves.push({el, dx, dy, delay: fresh ? (+el.dataset.pile || 0) * DEAL_STEP_MS : 0});
+    const r = rects[i];
+    const dx = was.x - r.left, dy = was.y - r.top;
+    /* The card may have changed size on this render - a deal makes every
+       column taller, and fit() answers by shrinking the cards - so the start
+       state is the old size as well as the old place. Scaling used to switch
+       the animation off instead, which is why a deal, of all things, was the
+       one move that teleported. */
+    const sx = was.w ? was.w / r.width : 1, sy = was.h ? was.h / r.height : 1;
+    if (Math.abs(dx) < 1 && Math.abs(dy) < 1 && Math.abs(sx - 1) < .01 && Math.abs(sy - 1) < .01) return;
+    moves.push({el, dx, dy, sx, sy, delay: fresh ? (+el.dataset.pile || 0) * DEAL_STEP_MS : 0});
   });
 
   for (const m of moves){
     m.el.classList.add('flying');
     m.el.style.transition = 'none';
-    m.el.style.transform = 'translate(' + m.dx + 'px,' + m.dy + 'px)';
+    m.el.style.transformOrigin = '0 0';
+    m.el.style.transform = 'translate(' + m.dx + 'px,' + m.dy + 'px) scale(' + m.sx.toFixed(4) + ',' + m.sy.toFixed(4) + ')';
   }
 
   /* One forced layout, and everything below depends on it. Setting the inverse
@@ -1277,7 +1288,7 @@ function flip(before, translate){
   const last = moves.reduce((a, m) => Math.max(a, m.delay), 0);
   setTimeout(() => {
     for (const m of moves)
-      if (m.el.isConnected){ m.el.classList.remove('flying'); m.el.style.transition = ''; }
+      if (m.el.isConnected){ m.el.classList.remove('flying'); m.el.style.transition = ''; m.el.style.transformOrigin = ''; }
   }, MOVE_MS + last + 60);
 
   /* Cards that were on the table and are not any more. Only a completed run
@@ -1329,7 +1340,6 @@ function render(before){
      edge was dragged is not a feature. */
   const play = MOTION && serial !== drawnSerial;
   if (play && !before) before = snapshot();
-  const wasW = L.cardW;
 
   fit();
   clampCursor();
@@ -1404,7 +1414,7 @@ function render(before){
      enough to resize every card on the board. That is why the size test only
      switches off the sliding, not the whole animation - the send-off has to
      survive exactly the move that most often triggers it. */
-  if (play) flip(before, Math.abs(L.cardW - wasW) < wasW * 0.02); else spawnAt = null;
+  if (play) flip(before); else spawnAt = null;
   drawnSerial = serial;
   drawnDone = state.done.length;
 }
@@ -1513,8 +1523,9 @@ $board.addEventListener('pointermove', e => {
     });
     markDrops(drag.from, drag.idx);
   }
+  $drag.style.transformOrigin = drag.dx + 'px ' + drag.dy + 'px';
   $drag.style.transform =
-    'translate(' + (e.clientX - drag.dx) + 'px,' + (e.clientY - drag.dy) + 'px)';
+    'translate(' + (e.clientX - drag.dx) + 'px,' + (e.clientY - drag.dy) + 'px) scale(1.06)';
 });
 
 /* An interrupted gesture - a swipe in from the screen edge, a second finger,
@@ -1542,7 +1553,16 @@ $board.addEventListener('pointerup', e => {
   $drag.innerHTML = '';
 
   const to = pileUnder(e.clientX);
-  if (to === null || !move(d.from, d.idx, to)) { render(); refuse(d.from, d.idx); return; }
+  if (to === null || !move(d.from, d.idx, to)){
+    /* Refused: the run flies back from where it was dropped, and only then
+       shakes. It used to reappear in its column the instant the finger lifted,
+       which read as a card snapping out of the hand. The shake waits for the
+       flight because both are transforms and the animation would win. */
+    render();
+    if (before){ flip(before); setTimeout(() => refuse(d.from, d.idx), MOVE_MS + 40); }
+    else refuse(d.from, d.idx);
+    return;
+  }
   selection = null;
   cursor = {pile: to, idx: state.tableau[to].length - 1};
   render(before);
