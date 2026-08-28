@@ -1218,18 +1218,40 @@ function pileUnder(x){
   return away <= L.cardW ? nearest : null;
 }
 
-/* Where a run "obviously" wants to go. Same scoring as the hint, but here the
-   best option is taken even if it scores badly: the player pointed at a card
-   and expects a move. Only genuine duds (scoreMove -> null) are refused. */
+/* Where a run "obviously" wants to go, for the double click.
+
+   scoreMove() returning null means "this move is pointless" - a run shuffled
+   from one card to an identical one, gaining nothing. That is the right thing
+   to hide from the hint, which is advice. It is the wrong thing to refuse from
+   the player, who pointed at a card and is waiting for it to move, and it used
+   to be refused: with every target scoring null this returned null and the
+   double click did nothing at all, silently. On a real table that was 29% of
+   the runs that had somewhere legal to go.
+
+   So there are two tiers. Take the best-scoring target if there is one;
+   otherwise take any legal one, because legal is what the player was promised -
+   the same canDrop() that lights the column up under markDrops(). The
+   tie-break only decides where a pointless move lands: onto its own suit
+   first, then any occupied column, and an empty column last, since an empty
+   column is the one resource not worth spending on a shuffle. */
 function bestTarget(from, idx){
+  const head = state.tableau[from][idx];
   let best = null, bestScore = -Infinity;
+  let fallback = null, fallbackRank = -Infinity;
+
   for (let to = 0; to < PILES; to++){
-    if (to === from || !canDrop(state, state.tableau[from][idx], to)) continue;
+    if (to === from || !canDrop(state, head, to)) continue;
+
+    const dst  = state.tableau[to];
+    const rank = dst.length === 0 ? 0
+               : (dst[dst.length - 1].s === head.s ? 2 : 1);
+    if (rank > fallbackRank){ fallbackRank = rank; fallback = to; }
+
     const sc = scoreMove(from, idx, to);
     if (sc === null) continue;
     if (sc > bestScore){ bestScore = sc; best = to; }
   }
-  return best;
+  return best !== null ? best : fallback;
 }
 
 /** Double click is detected here rather than natively: a real dblclick would
@@ -1248,6 +1270,9 @@ function click(p, i){
     if (isMovableRun(state, p, i)){
       const to = bestTarget(p, i);
       if (to !== null && move(p, i, to)){ selection = null; render(); return; }
+      /* Nowhere to go. Say so and keep the run in hand - dropping the selection
+         without a word is what made this look like a broken double click. */
+      render(); refuse(p, i); return;
     }
     selection = null; render(); return;
   }
