@@ -1801,7 +1801,21 @@ function clearMarks(){
 let hints = [], hintPos = -1, hintSerial = -1;
 
 function nextHint(){
-  if (hintSerial !== serial){ hints = findHints(); hintPos = -1; hintSerial = serial; }
+  if (hintSerial !== serial){
+    hints = findHints(); hintPos = -1; hintSerial = serial;
+    /* The same two moments the demonstration thinks at: the best move would
+       fill the last empty column, or nothing on offer gains anything. Then a
+       plan's first move goes to the head of the list, ranked above everything
+       the one-move scoring found - it was found by looking further. */
+    if (hints.length && (fillsLastEmpty(hints[0]) || hints[0].total <= 0)){
+      const plan = planAhead(SEARCH_NODES, new Set([posHash()]));
+      if (plan && plan[0].t === 'm'){
+        const x = plan[0];
+        hints = [{from: x.from, idx: x.idx, to: x.to, score: 99, total: 99}]
+          .concat(hints.filter(h => !(h.from === x.from && h.idx === x.idx && h.to === x.to)));
+      }
+    }
+  }
   clearMarks();
 
   if (state.done.length === GOAL){ setHint('check', '', ''); return; }
@@ -1851,9 +1865,9 @@ function nextHint(){
    The step is longer than a move animation, so it can be watched rather than
    merely observed to have happened. */
 const HOLD_MS = 700, AUTO_MS = 420, AUTO_CAP = 800;
-const ESCAPE_UNDO = 6, ESCAPE_NODES = 500;
 let autoTimer = null, holdTimer = null, heldDown = false, autoSeen = null, autoLeft = 0;
 let autoQueue = [];        // actions still to be played out visibly, see escape()
+let autoBest = -Infinity;  // the most the table has been worth this game, see escape()
 
 /* A position, as a string. Two positions that read the same are the same, so
    the ids are left out: spider has four of every card and which physical seven
@@ -1926,25 +1940,36 @@ function plugAndDeal(){
   return true;
 }
 
-/* ── Getting out ──────────────────────────────────────────────────────────
-   Greedy play walks into positions with no scored move and no deal to take.
-   Most of them are not dead. A run parked in an empty column frees the card
-   under it, that card goes somewhere, and the game moves again - it is just
-   that every step of that scores below zero on its own, and one move at a
-   time can never see past the first. So when the demonstration stalls it
-   searches: a depth-first walk from where it stands, over every legal move
-   including the ones scored as pointless, with the visited set as its memory.
-   If nothing turns up it takes one move back and searches again from there,
-   then two, up to ESCAPE_UNDO. The first position that reveals a card the
-   stall could not is the way out, and it is played back as the undos it
-   needs, then the moves.
+/* ── Thinking ahead ───────────────────────────────────────────────────────
+   One move at a time cannot see a combination, and spider is made of them:
+   park a run in the empty column, move what it was hiding, bring it back - the
+   empty column is still there and four cards more are in sequence. Or park
+   four hearts, drop four spades on the five they were covering, and the six
+   spades that frees complete a suit. Every step of those scores below zero on
+   its own; the last one scores a thousand. Both were reported, with the hint
+   recommending a king into the empty column instead - which reveals one card
+   and locks the column for the rest of the game, since a king can never leave
+   it. Three moves later, a dead end.
+
+   So the demonstration searches, and so does the hint, at the two moments
+   that call for it: when the best move on offer would fill the last empty
+   column, which is the one decision on the table that cannot be taken back,
+   and when there is no move left at all. The search is iterative deepening -
+   every one-move plan, then every two-move plan, and so on to SEARCH_DEPTH or
+   until the node budget runs out - so a short plan is always found before a
+   long one, and among the plans found the one worth most is kept. It scores
+   a position by worth() below, not by the move heuristic: the heuristic is
+   for ranking moves in one position, this is for comparing positions.
 
    Measured on one suit, following the hint: 12% of games won playing only
    positively scored moves, 77% once negative moves were allowed with the
    visited set to stop them looping and holes could be plugged with a shuffle,
-   87% with the search. On two suits, from 0.6 suits collected a game to 2.3.
-   The scoring itself was left alone: every reweighting tried measured flat or
-   worse. The errors were all in what the policy did with the scores.       */
+   88% with a search that only counted revealed cards, and the figure below
+   with this one. On two suits, from 0.6 suits collected a game to 2.4 and
+   then to the figure below. The move scoring itself was left alone: every
+   reweighting tried measured flat or worse. The errors were all in what the
+   policy did with the scores.                                                */
+const SEARCH_DEPTH = 6, SEARCH_NODES = 3000, ESCAPE_UNDO = 6, ESCAPE_NODES = 1500;
 
 function dealQuiet(){                                  // dealStock() without the undo snapshot
   const row = state.stock.pop();
@@ -1953,18 +1978,62 @@ function dealQuiet(){                                  // dealStock() without th
   serial++;
 }
 
-/* What a position is worth to the search: cards revealed, which only ever
-   goes up, then empty columns as the tie-break. */
-function progress(){
-  return {revealed: state.done.length * 13 + state.tableau.flat().filter(c => c.up).length,
-          empties: state.tableau.filter(p => !p.length).length};
-}
-const ahead = (a, b) => !b || a.revealed > b.revealed ||
-                        (a.revealed === b.revealed && a.empties > b.empties);
+/* What a position is worth. A collected suit dwarfs everything; a face-down
+   card is a liability; a card sitting on the next one up in its own suit is a
+   small, real gain - the currency a combination through the empty column is
+   paid in.
 
-/* Every legal move, best-scored first with the shuffles last, and the deal
-   slotted in ahead of the first move that scores nothing - the same order the
-   demonstration itself plays in. */
+   An empty column is a means, not an end, so it counts concavely and low.
+   The first is worth a little more than revealing a card - just enough that
+   a king parked in the last empty column, one card seen and the column locked
+   for the rest of the game, loses to any combination that keeps the column.
+   The second is worth less than a reveal, because with one buffer kept the
+   second is what you spend to dig, and the rest are worth next to nothing.
+   Valued flat and high, the search refused to clear a queen off five
+   face-down cards because it would cost the second of two empty columns,
+   and shuffled instead. */
+const EMPTY_WORTH = [0, 24, 36, 42, 45, 47, 48, 49, 50, 51, 52];
+
+function worth(){
+  let down = 0, empties = 0, pairs = 0;
+  for (const p of state.tableau){
+    if (!p.length) empties++;
+    for (let i = 0; i < p.length; i++){
+      const c = p[i];
+      if (!c.up){ down++; continue; }
+      if (i && p[i - 1].up && p[i - 1].s === c.s && p[i - 1].r === c.r + 1) pairs++;
+    }
+  }
+  return 1000 * state.done.length - 20 * down + EMPTY_WORTH[empties] + 3 * pairs;
+}
+
+/* Does moving the run at (from, idx) leave something wanted on top of its
+   column - a face-down card, or a card that some movable run of its own suit
+   could continue? This is how a player sees a combination at a glance: not by
+   the move, which is worth nothing, but by what it uncovers. The six of spades
+   sitting on the seven of hearts is a nothing move to lift; the seven of
+   hearts it uncovers has six-down-to-ace waiting in another column. */
+function uncoversWanted(from, idx){
+  if (idx === 0) return false;
+  const c = state.tableau[from][idx - 1];
+  if (!c.up) return true;
+  for (let p = 0; p < PILES; p++){
+    if (p === from) continue;
+    const pile = state.tableau[p];
+    for (let i = 0; i < pile.length; i++){
+      const h = pile[i];
+      if (h.s === c.s && h.r === c.r - 1 && isMovableRun(state, p, i)) return true;
+    }
+  }
+  return false;
+}
+
+/* Every legal move, ordered for the search: moves that uncover something
+   wanted first, then by score, shuffles last, with the deal slotted in ahead
+   of the first move that scores nothing. The order does not change what the
+   search can find, only what it finds within its budget - and without the
+   first rule the three-move combination through an empty column sat behind
+   thousands of nodes of better-scored nothing. */
 function searchCands(){
   const c = [];
   for (let p = 0; p < PILES; p++){
@@ -1975,7 +2044,8 @@ function searchCands(){
         if (to === p || !canDrop(state, pile[i], to)) continue;
         if (i === 0 && !state.tableau[to].length) continue;
         const sc = scoreMove(p, i, to);
-        c.push({t: 'm', from: p, idx: i, to, sc: sc === null ? -10 : sc});
+        c.push({t: 'm', from: p, idx: i, to,
+                sc: (sc === null ? -10 : sc) + (uncoversWanted(p, i) ? 12 : 0)});
       }
     }
   }
@@ -1988,42 +2058,66 @@ function searchCands(){
   return c;
 }
 
-/* Depth-first from `root`, at most `budget` positions. Returns the best
-   position reached and the actions that reach it. Works on the live state and
-   leaves it wherever it stopped: the caller puts it back. */
-function searchFrom(root, visited, budget){
+/* Iterative deepening from `root`. Positions in `avoid` are never offered as
+   an answer - they are where the game has already been. Works on the live
+   state and leaves it wherever it stopped: the caller puts it back. */
+function searchFrom(root, avoid, budget){
   let nodes = 0, best = null;
-  const stack = [{snap: root, act: null, cands: null, i: 0}];
-  while (stack.length && nodes < budget){
-    const fr = stack[stack.length - 1];
-    if (!fr.cands){ state = structuredClone(fr.snap); fr.cands = searchCands(); fr.i = 0; }
-    if (fr.i >= fr.cands.length){ stack.pop(); continue; }
-    const x = fr.cands[fr.i++];
-    state = structuredClone(fr.snap);
-    if (x.t === 'm') applyMove(x.from, x.idx, x.to); else dealQuiet();
-    nodes++;
-    const h = posHash();
-    if (visited.has(h)) continue;
-    visited.add(h);
-    const m = progress();
-    if (ahead(m, best))
-      best = {...m, path: stack.slice(1).map(f => f.act).concat([x]), win: state.done.length === GOAL};
-    if (best.win) break;
-    stack.push({snap: structuredClone(state), act: x, cands: null, i: 0});
+  for (let D = 1; D <= SEARCH_DEPTH && nodes < budget; D++){
+    const seen = new Map();                            // hash -> shallowest depth reached
+    const stack = [{snap: root, act: null, cands: null, i: 0, d: 0}];
+    while (stack.length && nodes < budget){
+      const fr = stack[stack.length - 1];
+      if (!fr.cands){ state = structuredClone(fr.snap); fr.cands = fr.d < D ? searchCands() : []; fr.i = 0; }
+      if (fr.i >= fr.cands.length){ stack.pop(); continue; }
+      const x = fr.cands[fr.i++];
+      state = structuredClone(fr.snap);
+      if (x.t === 'm') applyMove(x.from, x.idx, x.to); else dealQuiet();
+      nodes++;
+      const h = posHash(), d = fr.d + 1;
+      if (seen.has(h) && seen.get(h) <= d) continue;
+      seen.set(h, d);
+      const v = worth();
+      if (!avoid.has(h) && (!best || v > best.v || (v === best.v && d < best.path.length)))
+        best = {v, path: stack.slice(1).map(f => f.act).concat([x]), win: state.done.length === GOAL};
+      if (best && best.win) return best;
+      if (d < D) stack.push({snap: structuredClone(state), act: x, cands: null, i: 0, d});
+    }
   }
   return best;
 }
 
-/* The plan out of a stall - undos first, then moves - or null if none was
-   found within the budget. */
+/* A plan from here that leaves the table worth more than it is now, or null.
+   `avoid` defaults to the demonstration's visited set; the hint passes its
+   own, since nobody is replaying anything there. */
+function planAhead(budget, avoid, bar){
+  const here = Math.max(worth(), bar ?? -Infinity);
+  const saved = structuredClone(state), serialBefore = serial;
+  const best = searchFrom(structuredClone(saved), avoid || autoSeen, budget);
+  state = structuredClone(saved);
+  serial = serialBefore;
+  return best && best.v > here ? best.path : null;
+}
+
+/* Out of a stall: search from here, then from one move back, then two, up
+   to ESCAPE_UNDO. The plan is the undos it takes to get to that root and the
+   moves from there, played back visibly in that order.
+
+   The bar is the most the table has been worth all game, not what it is
+   worth now. Measured against now, this went round in circles: a plan gains
+   ground, the greedy play after it gives some back with a move that scored
+   below zero, the stall that follows is "worse than before", and the next
+   escape restores exactly the ground just lost - a hundred escapes in one
+   game, a minute of thinking for a demonstration that used to take two
+   seconds. Against the high-water mark every escape is real progress, and
+   there can only be so many of those. */
 function escape(){
-  const here = progress();
   const saved = structuredClone(state), serialBefore = serial;
   let plan = null;
   for (let k = 0; k <= ESCAPE_UNDO && k <= history.length; k++){
     const root = k === 0 ? saved : history[history.length - k];
     const best = searchFrom(structuredClone(root), autoSeen, ESCAPE_NODES);
-    if (best && (best.win || ahead(best, here))){
+    if (best && best.v > autoBest){
       plan = Array(k).fill('undo').concat(best.path);
       break;
     }
@@ -2031,6 +2125,12 @@ function escape(){
   state = structuredClone(saved);
   serial = serialBefore;
   return plan;
+}
+
+/* The move that would put a run into the last empty column. The one decision
+   on the table that cannot be taken back, so it is the one worth a search. */
+function fillsLastEmpty(x){
+  return !state.tableau[x.to].length && state.tableau.filter(p => !p.length).length === 1;
 }
 
 function autoStep(){
@@ -2045,6 +2145,8 @@ function autoStep(){
     else {
       if (a.t === 'm') move(a.from, a.idx, a.to); else dealStock();
       selection = null;
+      autoSeen.add(posHash());
+      autoBest = Math.max(autoBest, worth());
       render();
     }
     autoTimer = setTimeout(autoStep, AUTO_MS);
@@ -2058,27 +2160,53 @@ function autoStep(){
      a negative move can do is loop - the same run back and forth, two moves
      round - and that is what the visited set is for. */
   const snap = structuredClone(state), serialBefore = serial;
-  let played = false;
+  let next = null;
   for (const x of findHints()){
     applyMove(x.from, x.idx, x.to);
     const fresh = !autoSeen.has(posHash());
     state = structuredClone(snap);
     serial = serialBefore;
-    if (fresh){ move(x.from, x.idx, x.to); played = true; break; }
+    if (fresh){ next = x; break; }
   }
-  if (!played && canDealStock(state)){ dealStock(); played = true; }
-  if (!played && state.stock.length && plugAndDeal()) played = true;
 
-  if (!played){
-    const plan = escape();
-    if (!plan){ autoStop(); render(); return; }
+  /* Two moments to think first. About to spend the last empty column: see
+     whether it can earn its keep instead - a plan that leaves the table worth
+     more, with the column still empty at the end or a suit gone home, beats a
+     king parked in it. And nothing on offer gains anything: the greedy answer
+     is the least bad move, and the least bad move is how a three-move suit
+     completion gets walked straight past. */
+  /* Against the game's high-water mark, for the same reason escape() is: a
+     plan that only wins back what the greedy move after the last plan gave
+     away is the first half of a loop. */
+  let plan = next && (fillsLastEmpty(next) || next.total <= 0) ? planAhead(SEARCH_NODES, autoSeen, autoBest) : null;
+
+  /* A move that gains nothing is the last resort, not the next thing to try.
+     Played whenever it led somewhere new, such moves were a random walk: with
+     two empty columns to shuttle runs between there is always somewhere new,
+     and the demonstration spent sixty moves shuffling before it dealt. With
+     the search covering the combinations, the order is search, deal, escape,
+     and only then the least bad move. Same seeds, two suits: 35% won and games
+     up to 286 moves against 40% and never past 122. */
+  let played = false;
+  if (!plan){
+    const gains = next && next.total > 0;
+    if (gains){ move(next.from, next.idx, next.to); played = true; }
+    else if (canDealStock(state)){ dealStock(); played = true; }
+    else if (state.stock.length && plugAndDeal()) played = true;
+    if (!played) plan = escape();
+    if (!played && !plan && next){ move(next.from, next.idx, next.to); played = true; }
+  }
+
+  if (plan){
     autoQueue = plan;
     autoTimer = setTimeout(autoStep, AUTO_MS / 2);
     return;
   }
+  if (!played){ autoStop(); render(); return; }
 
   selection = null;
   autoSeen.add(posHash());
+  autoBest = Math.max(autoBest, worth());
   if (--autoLeft <= 0){ autoStop(); render(); return; }
   autoTimer = setTimeout(autoStep, AUTO_MS);
   render();
@@ -2088,6 +2216,7 @@ function autoStart(){
   if (autoTimer) return;
   clearMarks();
   autoSeen = new Set([posHash()]);
+  autoBest = worth();
   autoLeft = AUTO_CAP;
   autoQueue = [];
   autoTimer = setTimeout(autoStep, 0);

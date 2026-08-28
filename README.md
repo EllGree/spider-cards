@@ -78,6 +78,13 @@ The interface has no words in it, so here is what the marks mean.
 | a card shaking its head | the move was refused, not lost |
 | blue ring | where the keyboard cursor is |
 
+The hint ranks every legal move by a one-move heuristic and shows the best. At two
+moments it looks further instead: when the best move would fill the last empty
+column, and when no move on offer gains anything. Then it searches a few moves ahead
+for a combination that leaves the table better off - a run parked in the empty column
+so the card under it can move, a suit completed in three moves - and if it finds one,
+the first move of that combination is the hint. It takes about a third of a second.
+
 The hint button is also the state light: a bulb with a counter while moves exist, an
 arrow-into-a-stack when the only thing left to do is deal, a crossed circle at a dead
 end, a tick when the game is won. When the deal is waiting on an empty column, the
