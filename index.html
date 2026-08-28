@@ -161,9 +161,12 @@ svg.pip{fill:currentColor; stroke:none}
   /* The stock sits fixed in the bottom-right corner. Once fit() lets a column
      run the full height of the screen, that corner is no longer free, so the
      board gives the stock a lane of its own instead of growing into it. The
-     lane is 1.45 cards wide: the card, its margin, and the fan of backs that
-     spreads inwards from it. Keep in step with STOCK_R in the script. */
-  padding-right:calc(var(--card-w) * 1.45 + var(--safe-r));
+     lane is 1.55 cards wide: the card, its margin, the fan of backs spreading
+     inwards from it, and a tenth of a card of daylight. Without that last part
+     the gap came out at two pixels on a small screen with a full stock, which
+     is close enough to touching that any rounding closes it. Keep in step with
+     STOCK_R in the script. */
+  padding-right:calc(var(--card-w) * 1.55 + var(--safe-r));
   touch-action:none;
 }
 .pile{
@@ -232,6 +235,12 @@ svg.pip{fill:currentColor; stroke:none}
   bottom:calc(var(--card-w) * 0.22 + var(--safe-b));
   width:var(--card-w); height:var(--card-h); cursor:pointer;
 }
+/* Only the backs catch a tap, not the box they sit in. The box is a card-sized
+   rectangle pinned to the corner at z-index 10, and it stays there after the
+   last row is dealt - a transparent hole that goes on swallowing touches with
+   nothing left to deal. The handler is still on #stock and hears them bubble. */
+#stock{pointer-events:none}
+#stock .card{pointer-events:auto}
 #stock.dead{cursor:default; opacity:.4}
 #stock.cursor{box-shadow:0 0 0 3px var(--cursor); border-radius:var(--card-radius)}
 #stock .card{position:absolute}
@@ -822,7 +831,7 @@ const ROTATE_ICON =
 
 const ASPECT   = 1.4;      // 63 x 88 mm
 const GAP_R    = 0.11;     // gap between columns, as a fraction of card width
-const STOCK_R  = 1.45;     // lane reserved on the right for the stock and its fan
+const STOCK_R  = 1.55;     // lane reserved on the right for the stock and its fan
 const OPEN_R   = 0.235;    // full step under a face-up card, fraction of card HEIGHT
 const DOWN_R   = 0.05;     // ...and under a face-down one
 const OPEN_MIN = 13;       // px. Any tighter and the corner index stops reading
@@ -1141,14 +1150,26 @@ $board.addEventListener('pointerup', e => {
   render();
 });
 
-/** The column is found by X alone: columns are narrow and never overlap. */
+/** Which column a release belongs to. Columns are narrow and never overlap, so
+    x alone decides.
+
+    Past the last column lies the stock's lane - most of a card width of bare
+    felt - and a thumb reaching for the rightmost column overshoots into it
+    without noticing. Refusing the move there looks exactly like a column that
+    does not accept cards, so a release within a card's width of the row snaps
+    to the nearest column instead. Further out is a deliberate drop on the
+    table and still cancels. Nothing illegal slips through either way: move()
+    checks the move regardless of how the column was chosen. */
 function pileUnder(x){
   const cols = [...$board.children];
+  let nearest = null, away = Infinity;
   for (let i = 0; i < cols.length; i++){
     const r = cols[i].getBoundingClientRect();
     if (x >= r.left - L.gap / 2 && x <= r.right + L.gap / 2) return i;
+    const d = x < r.left ? r.left - x : x - r.right;
+    if (d < away){ away = d; nearest = i; }
   }
-  return null;
+  return away <= L.cardW ? nearest : null;
 }
 
 /* Where a run "obviously" wants to go. Same scoring as the hint, but here the
