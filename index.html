@@ -1030,13 +1030,65 @@ addEventListener('orientationchange', relayout);
 
 let drag = null;   // {from, idx, dx, dy, moved}
 
-$board.addEventListener('pointerdown', e => {
-  const el = e.target.closest('.card');
-  if (!el) return;
-  const p = +el.dataset.pile, i = +el.dataset.idx;
-  if (!isMovableRun(state, p, i)) return;
+/* ── Which card the pointer means ─────────────────────────────────────────
+   A card shows one cascade step of itself - as little as 13px - while the
+   bottom card of a column shows its whole height. Under a mouse pointer that
+   is nobody's problem. Under a fingertip it means the bottom card is a 94px
+   target and every card above it a 22px one, so a single card always comes
+   away and a run almost never does. Which is exactly how it was reported: not
+   "hard to grab" but "dragging several cards doesn't work".
 
-  const r = el.getBoundingClientRect();
+   The cards that can be picked up are always a suffix of the column - if a run
+   starts at i it also starts at every card below i - so they share out that
+   suffix's height between them by water-filling: everyone is guaranteed a
+   fingertip's worth, and the extra comes from the bottom card, which had far
+   more than it could use. Nothing moves on screen; only the hit test changes,
+   and with a mouse (slop 0) it stays exactly as it was. */
+const TOUCH_SLOP = 40;      // px. Apple asks 44 and Material 48, but 40 is what
+                            // a three-card run can afford without the bottom
+                            // card dropping below a fingertip itself.
+
+function cardUnder(col, y, slop){
+  const p = +col.dataset.pile, pile = state.tableau[p];
+  const cards = col.children;
+  if (!pile.length) return -1;
+
+  let head = pile.length;                       // first card that can be lifted
+  while (head > 0 && isMovableRun(state, p, head - 1)) head--;
+  if (head >= pile.length) return -1;           // nothing here is movable
+
+  const top = i => cards[i].getBoundingClientRect().top;
+  const foot = cards[pile.length - 1].getBoundingClientRect().bottom;
+  if (y < top(head)) return -1;
+
+  const band = [];
+  for (let i = head; i < pile.length; i++)
+    band.push((i + 1 < pile.length ? top(i + 1) : foot) - top(i));
+
+  /* Raise everything below `want` up to it and take the difference from those
+     above, in proportion. The total is unchanged, so the bands still tile the
+     column exactly - no gap, no overlap. */
+  const want = Math.min(slop, (foot - top(head)) / band.length);
+  let short = 0, spare = 0;
+  for (const v of band){ short += Math.max(0, want - v); spare += Math.max(0, v - want); }
+  const give = spare > 0 ? short / spare : 0;
+
+  let edge = top(head);
+  for (let j = 0; j < band.length; j++){
+    edge += band[j] >= want ? band[j] - (band[j] - want) * give : want;
+    if (y < edge) return head + j;
+  }
+  return pile.length - 1;
+}
+
+$board.addEventListener('pointerdown', e => {
+  const col = e.target.closest('.pile');
+  if (!col) return;
+  const p = +col.dataset.pile;
+  const i = cardUnder(col, e.clientY, e.pointerType === 'mouse' ? 0 : TOUCH_SLOP);
+  if (i < 0 || !isMovableRun(state, p, i)) return;
+
+  const r = col.children[i].getBoundingClientRect();
   drag = {from:p, idx:i, dx:e.clientX - r.left, dy:e.clientY - r.top,
           x0:e.clientX, y0:e.clientY, moved:false};
   $board.setPointerCapture(e.pointerId);
@@ -1061,6 +1113,18 @@ $board.addEventListener('pointermove', e => {
   }
   $drag.style.transform =
     'translate(' + (e.clientX - drag.dx) + 'px,' + (e.clientY - drag.dy) + 'px)';
+});
+
+/* An interrupted gesture - a swipe in from the screen edge, a second finger,
+   the browser deciding after all that this was a scroll - fires pointercancel
+   and never pointerup. Without this the run stays lifted: its cards invisible
+   in the column, its ghost frozen on screen. That reads as a broken game, and
+   it only heals on the next successful drag. */
+$board.addEventListener('pointercancel', () => {
+  if (!drag) return;
+  drag = null;
+  $drag.innerHTML = '';
+  render();
 });
 
 $board.addEventListener('pointerup', e => {
