@@ -77,10 +77,14 @@ end, a tick when the game is won.
 
 ## On phones
 
-Landscape only — ten columns do not fit across a portrait screen, and the game asks
-you to turn the device rather than shrink the cards past reading. It tries to go
-fullscreen and lock the orientation on first tap; browsers that refuse (iOS Safari
-has no orientation lock at all) get the rotate prompt instead. Pull-to-refresh,
+Landscape is the way to play it — ten columns across a portrait screen leaves the
+cards barely legible — so held upright the game asks you to turn the device. That
+prompt can always be tapped away, though, and then it plays in portrait, cramped:
+some in-app browsers (Telegram's on iOS) never report a rotation and may not permit
+one, and a prompt only a rotation can clear would be a dead end with the game
+locked behind it. It also tries to go fullscreen and lock the orientation on first
+tap; browsers that refuse (iOS Safari has no orientation lock at all) simply keep
+the prompt. Pull-to-refresh,
 double-tap zoom and the long-press menu are all turned off, because every one of
 them fires on gestures this game needs.
 

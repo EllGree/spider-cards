@@ -141,6 +141,9 @@ svg.pip{fill:currentColor; stroke:none}
 
 #spacer{flex:1}
 
+/* The controls come first and never squash. */
+#bar > button, #suits{flex:none}
+
 /* Collected runs: eight slots, one per suit that has left the table. */
 #done{display:flex; gap:3px}
 .slot{
@@ -151,6 +154,13 @@ svg.pip{fill:currentColor; stroke:none}
 .slot svg{width:10px; height:10px; display:none}
 .slot.filled{border-style:solid; border-color:transparent; background:var(--face)}
 .slot.filled svg{display:block}
+
+/* The bar needs about 510px to hold everything and a phone held upright gives
+   it 390, so something has to go. These slots are it: they report progress,
+   they do not do anything, and a finished suit announces itself by leaving the
+   table. Portrait only - the narrowest landscape phone is still 568 across.
+   Must come after the rule above, or it loses the tie on source order. */
+@media (max-width: 520px){ #done{display:none} }
 
 /* ── Table ─────────────────────────────────────────────────────────────── */
 #board{
@@ -312,7 +322,12 @@ svg.pip{fill:currentColor; stroke:none}
 /* Portrait nag. Only ever shown on a touch device held the wrong way; the
    orientation lock below is attempted first and this is the fallback for the
    browsers that refuse it. */
-#rotate{background:var(--felt-2); z-index:500}
+#rotate{background:var(--felt-2); z-index:500; cursor:pointer}
+#rotate > div{display:grid; justify-items:center}
+/* The way out. Dimmed, because rotating really is the better answer - but it
+   has to be visible, or the sheet is a wall. */
+#rotate .dismiss{margin-top:1.7em; opacity:.5}
+#rotate .dismiss svg{width:clamp(26px, 7vmin, 46px); height:clamp(26px, 7vmin, 46px)}
 /* No stroke-width here, on purpose. This icon has a 200-unit viewBox and carries
    its own weights inline; a CSS override would be read in those units and thin
    every outline down to a hairline. */
@@ -1480,7 +1495,8 @@ function toggleHelp(on){
 document.getElementById('keys').addEventListener('click', () => toggleHelp());
 $help.addEventListener('click', () => toggleHelp(false));
 
-$rotate.innerHTML = '<div>' + ROTATE_ICON + '</div>';
+$rotate.innerHTML = '<div>' + ROTATE_ICON +
+                    '<span class="dismiss">' + ico('cancel') + '</span></div>';
 
 /* The win sheet closes on a click or any key */
 $msg.addEventListener('click', newGame);
@@ -1495,11 +1511,24 @@ $msg.addEventListener('click', newGame);
 
 const coarse = matchMedia('(pointer: coarse)').matches;
 
+/* The portrait nag has to be escapable. Telegram's in-app browser on iOS never
+   reports a rotation - it may not permit one at all - and a sheet that only a
+   rotation can clear is a dead end with the whole game locked behind it. A tap
+   dismisses it for the session; ten columns across a portrait screen is cramped
+   but it is a game, and a wall is not. */
+let nagged = false;
+
 function checkOrientation(){
-  $rotate.classList.toggle('on', coarse && innerHeight > innerWidth);
+  $rotate.classList.toggle('on', coarse && !nagged && innerHeight > innerWidth);
 }
 addEventListener('resize', checkOrientation);
 addEventListener('orientationchange', checkOrientation);
+/* Second source for the same signal: WKWebView resizes the visual viewport
+   without always firing a resize on the window, which is the other half of why
+   the sheet could get stuck up after a rotation that did happen. */
+if (window.visualViewport) visualViewport.addEventListener('resize', checkOrientation);
+
+$rotate.addEventListener('click', () => { nagged = true; checkOrientation(); relayout(); });
 
 function lockLandscape(){
   try {
