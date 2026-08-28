@@ -307,7 +307,14 @@ svg.pip{fill:currentColor; stroke:none}
 /* ── Overlays ──────────────────────────────────────────────────────────── */
 .sheet{
   position:fixed; inset:0; z-index:400;
-  display:none; place-items:center;
+  display:none;
+  /* `safe` matters: when the content is bigger than the window - which happens
+     when a browser reports a window bigger than the one it shows - plain
+     centring pushes the top out of reach, while safe centring gives up and
+     aligns to the start. With the scroll below, the sheet is then merely
+     awkward instead of truncated. */
+  place-items:safe center;
+  overflow:auto; touch-action:pan-y;
   background:rgba(0,0,0,.55);
   -webkit-backdrop-filter:blur(2px); backdrop-filter:blur(2px);
   padding:calc(16px + var(--safe-t)) calc(16px + var(--safe-r)) calc(16px + var(--safe-b)) calc(16px + var(--safe-l));
@@ -2056,26 +2063,36 @@ const SHEET_WIDTHS = ['300px', '380px', '480px', '600px', '760px', '940px'];
    out in the window the browser admits to, so if the visible part is shorter,
    the middle of one is not the middle of the other and the box has to be small
    enough to survive being placed by the wrong one. */
-function sheetRoom(){
+function sheetRoom(sheet){
   const vv = window.visualViewport;
   const w = Math.min(innerWidth, document.documentElement.clientWidth || Infinity,
-                     vv ? vv.width : Infinity) - $safe.offsetWidth;
+                     vv ? vv.width : Infinity);
   const h = Math.min(innerHeight, document.documentElement.clientHeight || Infinity,
-                     vv ? vv.height : Infinity) - $safe.offsetHeight;
+                     vv ? vv.height : Infinity);
   const laidW = Math.max(innerWidth, document.documentElement.clientWidth || 0);
   const laidH = Math.max(innerHeight, document.documentElement.clientHeight || 0);
-  return {w: SHEET_FILL * Math.max(w / 2, 2 * w - laidW),
-          h: SHEET_FILL * Math.max(h / 2, 2 * h - laidH)};
+
+  /* The sheet's own padding already carries the safe-area insets, so it is
+     taken from here and the insets are not subtracted twice - doing both left
+     the box a few pixels too tall for its container and put a scrollbar on a
+     sheet that fitted perfectly well. */
+  const cs = sheet ? getComputedStyle(sheet) : null;
+  const padW = cs ? parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight) : 0;
+  const padH = cs ? parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom) : 0;
+
+  return {w: SHEET_FILL * Math.max(w / 2, 2 * w - laidW) - padW,
+          h: SHEET_FILL * Math.max(h / 2, 2 * h - laidH) - padH};
 }
 
 function fitSheet(sheet){
   const box = sheet.firstElementChild;
   if (!box || !sheet.classList.contains('on')) return;
-  const room = sheetRoom();
+  const room = sheetRoom(sheet);
 
   let best = null;
   for (const w of (sheet === $book ? SHEET_WIDTHS : [''])){
     box.style.transform = 'none';
+    box.style.marginBottom = '0px';
     box.style.width = w;
     const r = box.getBoundingClientRect();
     if (!r.width || !r.height) continue;
@@ -2085,15 +2102,26 @@ function fitSheet(sheet){
   }
   if (!best) return;
   box.style.width = best.w;
-  box.style.transform = 'scale(' + best.k.toFixed(3) + ')';
+  apply(box, best.k);
 
   /* Then check rather than trust. Whatever the window was measured as, this is
      the box as actually drawn; if it still sticks out, shrink by exactly the
      amount it sticks out by. */
   const got = box.getBoundingClientRect();
   const over = Math.max(got.width / room.w, got.height / room.h, 1);
-  if (over > 1.002)
-    box.style.transform = 'scale(' + (best.k / over).toFixed(3) + ')';
+  if (over > 1.002) apply(box, best.k / over);
+}
+
+/* Scale from the top edge, and reserve the height the scaling adds, so the
+   sheet's own scrollbar knows how tall the box really is. Everything above is
+   arithmetic on numbers the browser reports; this is the part that holds when
+   those numbers are wrong, because a sheet that is too big to fit can then be
+   scrolled instead of simply losing its last line off the bottom. */
+function apply(box, k){
+  const h = box.offsetHeight;
+  box.style.transformOrigin = 'top center';
+  box.style.transform = 'scale(' + k.toFixed(3) + ')';
+  box.style.marginBottom = Math.max(0, (k - 1) * h).toFixed(1) + 'px';
 }
 
 function toggleBook(on){
