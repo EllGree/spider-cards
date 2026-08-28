@@ -80,7 +80,9 @@ The interface has no words in it, so here is what the marks mean.
 
 The hint button is also the state light: a bulb with a counter while moves exist, an
 arrow-into-a-stack when the only thing left to do is deal, a crossed circle at a dead
-end, a tick when the game is won.
+end, a tick when the game is won. When the deal is waiting on an empty column, the
+deal icon comes with the plug marked in violet: the run to park there so the stock
+unlocks. It scores as a shuffle, and it is also the only way forward.
 
 Both endings announce themselves without being asked. Winning covers the table with a
 tick. Running out of moves covers it with a crossed circle and two ways on — undo,
