@@ -287,6 +287,19 @@ svg.pip{fill:currentColor; stroke:none}
 .sheet.on{display:grid; animation:fade .45s ease-out}
 @keyframes fade{from{opacity:0}to{opacity:1}}
 
+/* Dead end. There has been a win screen since the beginning and nothing at all
+   for the other ending - only the hint button turning red, which is a 40px
+   square in a corner and easy to play past without ever noticing the game is
+   over. Two ways out, because a dead end in spider is not always final: undo
+   walks back to the branch, restart deals again. Tapping the backdrop puts the
+   sheet away for this position, in case you want to stare at it a while. */
+#over{cursor:pointer}
+#over > div > svg{width:clamp(60px, 16vmin, 130px); height:clamp(60px, 16vmin, 130px);
+                  color:#ffb4b4}
+#over .acts{display:flex; gap:16px; margin-top:1.6em}
+#over .acts button{width:52px; height:52px; cursor:pointer}
+#over .acts svg{width:26px; height:26px}
+
 #msg{cursor:pointer}
 #msg svg{width:clamp(64px, 18vmin, 150px); height:clamp(64px, 18vmin, 150px); color:var(--goal)}
 #msg .again{margin-top:1.4em; opacity:.6}
@@ -322,7 +335,11 @@ svg.pip{fill:currentColor; stroke:none}
 /* Portrait nag. Only ever shown on a touch device held the wrong way; the
    orientation lock below is attempted first and this is the fallback for the
    browsers that refuse it. */
-#rotate{background:var(--felt-2); z-index:500; cursor:pointer}
+/* Same dimmed, blurred sheet as the others - it inherits the lot from .sheet.
+   It used to paint solid felt over everything, which set it apart from every
+   other overlay for no reason: the table behind is worth seeing, and dismissing
+   this is a choice rather than an error. */
+#rotate{z-index:500; cursor:pointer}
 #rotate > div{display:grid; justify-items:center}
 /* The way out. Dimmed, because rotating really is the better answer - but it
    has to be visible, or the sheet is a wall. */
@@ -436,6 +453,7 @@ svg.pip{fill:currentColor; stroke:none}
 <div id="drag"></div>
 <div id="msg" class="sheet"></div>
 <div id="help" class="sheet" role="dialog" aria-label="Keyboard map"></div>
+<div id="over" class="sheet" role="alert" aria-label="No moves left"></div>
 <div id="rotate" class="sheet" role="alert" aria-label="Rotate your device"></div>
 <div id="safe" aria-hidden="true"></div>
 
@@ -959,6 +977,7 @@ const $done   = document.getElementById('done');
 const $suits  = document.getElementById('suits');
 const $msg    = document.getElementById('msg');
 const $help   = document.getElementById('help');
+const $over   = document.getElementById('over');
 const $rotate = document.getElementById('rotate');
 const $safe   = document.getElementById('safe');
 const $drag   = document.getElementById('drag');
@@ -998,6 +1017,24 @@ function pileSteps(pile){
   const steps = [];
   for (let i = 1; i < pile.length; i++) steps.push(pile[i - 1].up ? L.open : L.down);
   return steps;
+}
+
+/** Is the game actually stuck? Legality only - scoreMove()'s idea of a
+    pointless move has no business here, because a pointless move is still a
+    move and still changes the position. Returns on the first one it finds, so
+    on a live table this costs almost nothing. */
+function isDeadEnd(){
+  if (state.done.length === GOAL) return false;
+  if (canDealStock(state)) return false;
+  for (let from = 0; from < PILES; from++){
+    const pile = state.tableau[from];
+    for (let i = 0; i < pile.length; i++){
+      if (!isMovableRun(state, from, i)) continue;
+      for (let to = 0; to < PILES; to++)
+        if (to !== from && canDrop(state, pile[i], to)) return false;
+    }
+  }
+  return true;
 }
 
 /** Keep the keyboard cursor pointing at a card that still exists. */
@@ -1073,7 +1110,13 @@ function render(){
                      '<span class="again">' + ico('restart') + '</span></div>';
     $msg.classList.add('on');
   } else $msg.classList.remove('on');
+
+  /* Shown once per position: dismiss it and it stays dismissed until something
+     moves, so it cannot nag while you look the table over. */
+  $over.classList.toggle('on', deadSeen !== serial && isDeadEnd());
 }
+
+let deadSeen = -1;                       // serial whose dead end has been dismissed
 
 let resizeTimer = null;
 function relayout(){
@@ -1363,6 +1406,16 @@ addEventListener('keydown', e => {
 
   if ($msg.classList.contains('on')){ e.preventDefault(); newGame(); return; }
 
+  /* The dead-end sheet keeps its own two exits open and swallows the rest -
+     nothing else is any use in a position that has no moves. */
+  if ($over.classList.contains('on')){
+    e.preventDefault();
+    if (e.key === 'F2') newGame();
+    else if ((e.key === 'z' || e.key === 'Z') && (e.ctrlKey || e.metaKey)) undo();
+    else dismissOver();
+    return;
+  }
+
   /* Nothing leaks through an open sheet - and nothing leaks past it to the
      browser either, or Ctrl+Z would reach the browser's own undo. */
   if ($help.classList.contains('on')){
@@ -1495,6 +1548,21 @@ function toggleHelp(on){
 document.getElementById('keys').addEventListener('click', () => toggleHelp());
 $help.addEventListener('click', () => toggleHelp(false));
 
+$over.innerHTML = '<div>' + ico('blocked') +
+  '<span class="acts">' +
+    '<button id="over-undo" title="Undo (Ctrl+Z)" aria-label="Undo">' + ico('undo') + '</button>' +
+    '<button id="over-new" title="New game (F2)" aria-label="New game">' + ico('restart') + '</button>' +
+  '</span></div>';
+
+/** Put the dead-end sheet away without touching the position. */
+function dismissOver(){ deadSeen = serial; $over.classList.remove('on'); }
+
+$over.addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if (!b) { dismissOver(); return; }         // backdrop
+  if (b.id === 'over-undo') undo(); else newGame();
+});
+
 $rotate.innerHTML = '<div>' + ROTATE_ICON +
                     '<span class="dismiss">' + ico('cancel') + '</span></div>';
 
@@ -1571,6 +1639,7 @@ function newGame(){
   serial++;
   hints = []; hintPos = -1; hintSerial = -1;
   $msg.classList.remove('on');
+  $over.classList.remove('on');
   render();
 }
 

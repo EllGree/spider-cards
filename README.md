@@ -75,6 +75,11 @@ The hint button is also the state light: a bulb with a counter while moves exist
 arrow-into-a-stack when the only thing left to do is deal, a crossed circle at a dead
 end, a tick when the game is won.
 
+Both endings announce themselves without being asked. Winning covers the table with a
+tick. Running out of moves covers it with a crossed circle and two ways on — undo,
+because a dead end in spider is rarely the first wrong move, and a fresh deal. Tap the
+background to put that away and look the position over.
+
 ## On phones
 
 Landscape is the way to play it — ten columns across a portrait screen leaves the
