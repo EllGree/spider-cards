@@ -143,6 +143,13 @@ svg.pip{fill:currentColor; stroke:none}
       display:flex; align-items:center; justify-content:center}
 #hint.blocked{color:#ffb4b4; border-color:rgba(255,120,120,.45); background:rgba(255,90,90,.16)}
 #hint.deal{color:var(--goal); border-color:rgba(126,224,163,.45)}
+/* The bulb breathing means the game is playing itself. Held down, it stops
+   suggesting and starts doing. */
+#hint.auto{
+  color:var(--goal); border-color:rgba(126,224,163,.5);
+  animation:breathe 1.15s ease-in-out infinite;
+}
+@keyframes breathe{50%{background:rgba(126,224,163,.30)}}
 #count{font-size:11px; font-variant-numeric:tabular-nums; letter-spacing:.02em}
 #count:empty{display:none}
 
@@ -338,21 +345,35 @@ svg.pip{fill:currentColor; stroke:none}
 #rulebook > div{
   background:rgba(20,40,30,.94);
   border:1px solid rgba(255,255,255,.16); border-radius:14px;
-  padding:20px 22px;
+  /* 16 and not 20: on a phone in landscape those eight pixels were the whole
+     difference between the sheet fitting and the sheet scrolling. */
+  padding:16px 22px;
   max-height:100%; overflow:auto;
   touch-action:pan-y;
   /* Needs a width of its own: the sheet centres its child, so the child shrinks
      to its contents, and auto-fit with nothing to fill collapses to one column
      no matter how much room the screen has. */
-  width:min(100%, 420px);
-  /* Two columns, deliberately: the two taking panels belong side by side, since
-     the whole point is that they are the same shape with one card's suit
-     changed. The putting panel takes the row under them. */
-  display:grid; grid-template-columns:repeat(2, minmax(0, 1fr));
-  gap:20px 24px; justify-items:center; align-items:end;
+  /* Wide enough to lay all three panels in a row when the screen allows it. A
+     phone in landscape has width to spare and no height at all, and the sheet
+     was making it scroll for want of using the room beside it. */
+  width:min(100%, 640px);
+  display:grid; grid-template-columns:repeat(auto-fit, minmax(130px, 1fr));
+  gap:18px 22px; justify-items:center; align-items:end;
 }
-#rulebook .rule:last-child{grid-column:1 / -1}
-#rulebook .rule{display:grid; justify-items:center; gap:12px}
+#rulebook .rule{display:grid; justify-items:center; gap:10px}
+/* The pictures alone asked people to infer the rule from a colour, which is a
+   lot to ask of someone who has just learned this is not the game they thought
+   it was. Words earn their place here, and only here. */
+#rulebook .say{
+  font-size:12px; line-height:1.35; text-align:center;
+  color:#cfe0d5; opacity:.85; max-width:15em;
+}
+#rulebook .goal{
+  grid-column:1 / -1;
+  border-top:1px solid rgba(255,255,255,.13);
+  padding-top:14px; margin-top:2px;
+  display:grid; gap:7px; justify-items:center;
+}
 #rulebook .pair{display:flex; align-items:center; gap:9px}
 #rulebook .stack{position:relative; display:block; width:var(--mini-w)}
 #rulebook .card{
@@ -1736,7 +1757,9 @@ $suits.addEventListener('click', e => {
 /** The hint button doubles as the state light: bulb, deal, dead end, done.
     The counter is digits only, so the toolbar stays wordless. */
 function setHint(name, count, cls){
-  $hint.className = cls || '';
+  /* render() calls this on every move, so the autoplay marker has to be put
+     back each time or the bulb would stop breathing after the first one. */
+  $hint.className = [cls, autoTimer ? 'auto' : ''].filter(Boolean).join(' ');
   $hint.innerHTML = ico(name) + (count ? '<span id="count">' + count + '</span>' : '');
 }
 
@@ -1778,7 +1801,92 @@ function nextHint(){
   (dst.length ? dst[dst.length - 1] : $board.children[to]).classList.add('target');
 }
 
-$hint.addEventListener('click', nextHint);
+/* ── Hold the bulb ────────────────────────────────────────────────────────
+   Undocumented on purpose. The hint button already knows what it would play;
+   holding it down means stop telling me and do it. It plays its own top hint,
+   deals when it runs out of moves, and stops the moment anyone touches
+   anything - or when the game is won or dead, which it will announce in the
+   usual way, since it goes through move() and render() like a player would.
+
+   The step is longer than a move animation, so it can be watched rather than
+   merely observed to have happened. */
+const HOLD_MS = 700, AUTO_MS = 420, AUTO_CAP = 400;
+let autoTimer = null, holdTimer = null, heldDown = false, autoSeen = null, autoLeft = 0;
+
+/* A position, as a string. Two positions that read the same are the same, so
+   the ids are left out: spider has four of every card and which physical seven
+   is on top changes nothing. Same stock depth means the same stock, since it
+   only ever shrinks. */
+function posKey(){
+  return state.done.length + '|' + state.stock.length + '|' +
+    state.tableau.map(p => p.map(c => (c.up ? '' : '-') + c.r + ':' + c.s).join(',')).join('/');
+}
+
+function autoStep(){
+  autoTimer = null;
+  if (state.done.length === GOAL) return autoStop();
+
+  /* Only moves that gain something. Left to take the top of the list whatever
+     it scored, it would start shuffling a run between two columns the moment
+     nothing useful was left - which on two suits is every game, and the loop it
+     falls into is only two moves long. The interface already calls those moves
+     out in violet; there is no reason to watch the game make them. */
+  const h = findHints();
+  if (h.length && h[0].total > 0) move(h[0].from, h[0].idx, h[0].to);
+  else if (canDealStock(state)) dealStock();
+  else { autoStop(); render(); return; }
+
+  selection = null;
+
+  /* Always playing the top-ranked move is a policy with no memory, so it walks
+     into loops - shuffle a card across and back, forever, with the position
+     identical each time round. Every game does it eventually; the median is
+     about twenty moves in. Nothing here can fix that, and it does not need to:
+     a position seen before means the same sequence is about to replay, so this
+     is where the demonstration ends. The counter is a backstop for a cycle too
+     long to have been noticed. */
+  const k = posKey();
+  if (autoSeen.has(k) || --autoLeft <= 0){ autoStop(); render(); return; }
+  autoSeen.add(k);
+
+  autoTimer = setTimeout(autoStep, AUTO_MS);
+  render();
+}
+
+function autoStart(){
+  if (autoTimer) return;
+  clearMarks();
+  autoSeen = new Set([posKey()]);
+  autoLeft = AUTO_CAP;
+  autoTimer = setTimeout(autoStep, 0);
+  $hint.classList.add('auto');
+}
+
+function autoStop(){
+  if (!autoTimer && !$hint.classList.contains('auto')) return;
+  clearTimeout(autoTimer);
+  autoTimer = null;
+  $hint.classList.remove('auto');
+}
+
+$hint.addEventListener('pointerdown', () => {
+  heldDown = false;
+  clearTimeout(holdTimer);
+  holdTimer = setTimeout(() => { heldDown = true; autoStart(); }, HOLD_MS);
+});
+for (const t of ['pointerup', 'pointerleave', 'pointercancel'])
+  $hint.addEventListener(t, () => clearTimeout(holdTimer));
+
+/* A hold ends in a click too, and that click must not also step the hint. */
+$hint.addEventListener('click', () => {
+  if (heldDown){ heldDown = false; return; }
+  nextHint();
+});
+
+/* Anything deliberate stops it. Capture, so it lands before the handler that
+   would otherwise act on the same event. */
+for (const t of ['pointerdown', 'keydown'])
+  addEventListener(t, () => { if (autoTimer) autoStop(); }, true);
 $undo.addEventListener('click', undo);
 document.getElementById('new').addEventListener('click', newGame);
 
@@ -1845,17 +1953,27 @@ function ruleStack(cards){
     '</span>';
 }
 
-const rulePanel = (fig, ok) =>
+const rulePanel = (fig, ok, say) =>
   '<span class="rule">' + fig +
   '<span class="verdict ' + (ok ? 'yes' : 'no') + '">' +
-  ico(ok ? 'check' : 'blocked') + '</span></span>';
+  ico(ok ? 'check' : 'blocked') + '</span>' +
+  '<span class="say">' + say + '</span></span>';
 
 $book.innerHTML = '<div>' +
-  rulePanel(ruleStack([['9S','sel'], ['8S','sel'], ['7S','sel']]), true) +
-  rulePanel(ruleStack([['9S',''],    ['8H',''],    ['7S','sel']]), false) +
+  rulePanel(ruleStack([['9S','sel'], ['8S','sel'], ['7S','sel']]), true,
+            'Take a run of one suit &mdash; all of it moves together') +
+  rulePanel(ruleStack([['9S',''],    ['8H',''],    ['7S','sel']]), false,
+            'A card of another suit breaks the run. Only what is below it comes') +
   rulePanel('<span class="pair">' + ruleStack([['7H','sel']]) +
             '<span class="arrow">' + ico('arrow') + '</span>' +
-            ruleStack([['8S','drop']]) + '</span>', true) +
+            ruleStack([['8S','drop']]) + '</span>', true,
+            'Put it on any suit, one rank higher &mdash; or into an empty column') +
+  '<span class="goal">' +
+    '<span class="say">Collect king down to ace in one suit and it leaves the ' +
+      'table. Eight of them wins.</span>' +
+    '<span class="say">The stock deals a row, but not while a column stands ' +
+      'empty.</span>' +
+  '</span>' +
   '</div>';
 
 function toggleBook(on){

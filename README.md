@@ -56,8 +56,10 @@ Mouse and keyboard share one selection, so you can switch between them mid-move.
 | `F2` | new game |
 | `F1` | show this key map |
 
-The **?** button in the toolbar shows the rules. It is drawn, not written, like
-everything else here.
+The **?** button in the toolbar shows the rules: the three things people get
+wrong, drawn as cards in the table's own colours, with a line of text under each.
+Words are allowed on that one sheet and nowhere else — two testers in a row read
+the pictures alone and still guessed at the rule.
 
 With a pointer: drag a run where it should go, or click once to pick it up and once
 again to drop it. Double-click plays the best available move for that run.
