@@ -1967,6 +1967,7 @@ $help.innerHTML = '<div>' + KEYMAP.map(([keys, name]) =>
 function toggleHelp(on){
   $help.classList.toggle('on', on === undefined ? !$help.classList.contains('on') : on);
   fitSheet($help);
+  setTimeout(() => fitSheet($help), 250);
 }
 document.getElementById('keys').addEventListener('click', () => toggleHelp());
 $help.addEventListener('click', () => toggleHelp(false));
@@ -2048,11 +2049,29 @@ const SHEET_FILL = 0.94, SHEET_MAX = 2.6;
    costs nothing. The key map has no such freedom, so it is measured as it is. */
 const SHEET_WIDTHS = ['300px', '380px', '480px', '600px', '760px', '940px'];
 
+/* How much room there really is. Three sources disagree in an in-app browser -
+   a sheet sized to innerHeight came out centred in something taller than the
+   screen, with a gap above it and its last line cut off below - so the smallest
+   is taken. The second term is the price of centring: the sheet itself is laid
+   out in the window the browser admits to, so if the visible part is shorter,
+   the middle of one is not the middle of the other and the box has to be small
+   enough to survive being placed by the wrong one. */
+function sheetRoom(){
+  const vv = window.visualViewport;
+  const w = Math.min(innerWidth, document.documentElement.clientWidth || Infinity,
+                     vv ? vv.width : Infinity) - $safe.offsetWidth;
+  const h = Math.min(innerHeight, document.documentElement.clientHeight || Infinity,
+                     vv ? vv.height : Infinity) - $safe.offsetHeight;
+  const laidW = Math.max(innerWidth, document.documentElement.clientWidth || 0);
+  const laidH = Math.max(innerHeight, document.documentElement.clientHeight || 0);
+  return {w: SHEET_FILL * Math.max(w / 2, 2 * w - laidW),
+          h: SHEET_FILL * Math.max(h / 2, 2 * h - laidH)};
+}
+
 function fitSheet(sheet){
   const box = sheet.firstElementChild;
   if (!box || !sheet.classList.contains('on')) return;
-  const roomW = SHEET_FILL * (innerWidth  - $safe.offsetWidth);
-  const roomH = SHEET_FILL * (innerHeight - $safe.offsetHeight);
+  const room = sheetRoom();
 
   let best = null;
   for (const w of (sheet === $book ? SHEET_WIDTHS : [''])){
@@ -2060,21 +2079,38 @@ function fitSheet(sheet){
     box.style.width = w;
     const r = box.getBoundingClientRect();
     if (!r.width || !r.height) continue;
-    const k = Math.min(roomW / r.width, roomH / r.height, SHEET_MAX);
+    const k = Math.min(room.w / r.width, room.h / r.height, SHEET_MAX);
     const covered = k * r.width * k * r.height;
     if (!best || covered > best.covered) best = {w, k, covered};
   }
   if (!best) return;
   box.style.width = best.w;
   box.style.transform = 'scale(' + best.k.toFixed(3) + ')';
+
+  /* Then check rather than trust. Whatever the window was measured as, this is
+     the box as actually drawn; if it still sticks out, shrink by exactly the
+     amount it sticks out by. */
+  const got = box.getBoundingClientRect();
+  const over = Math.max(got.width / room.w, got.height / room.h, 1);
+  if (over > 1.002)
+    box.style.transform = 'scale(' + (best.k / over).toFixed(3) + ')';
 }
 
 function toggleBook(on){
   $book.classList.toggle('on', on === undefined ? !$book.classList.contains('on') : on);
   fitSheet($book);
+  setTimeout(() => fitSheet($book), 250);
 }
 document.getElementById('rules').innerHTML = ico('rules');
 document.getElementById('rules').addEventListener('click', () => toggleBook());
+
+/* In-app browsers grow and shrink their own furniture after the page has
+   settled, and not always with a resize event to say so, so an open sheet is
+   measured again a moment later and keeps following the visual viewport. */
+for (const t of ['resize', 'scroll'])
+  window.visualViewport && visualViewport.addEventListener(t, () => {
+    fitSheet($book); fitSheet($help);
+  });
 $book.addEventListener('click', () => toggleBook(false));
 
 $rotate.innerHTML = '<div>' + ROTATE_ICON +
