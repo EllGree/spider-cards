@@ -768,7 +768,13 @@ function scoreMove(from, idx, to){
   const runLen  = pile.length - idx;
 
   let sc = 0;
-  if (joins)   sc += 5 + Math.min(runLen, 5);   // a long merge beats a short one
+  /* A merge is worth what it builds, so it is scored twice over: by the run you
+     bring, and by the run already there. Without the second half, dropping a ten
+     on a lone jack and dropping it on the jack of a king-queen-jack came out
+     identical - and they are not, the second is three cards nearer a finished
+     suit. Landing on a lone card still scores exactly what it always did; the
+     term only separates targets that were being treated as interchangeable. */
+  if (joins)   sc += 5 + Math.min(runLen, 5) + 2 * Math.min(tailRun(dst) - 1, 4);
   if (opens)   sc += 5;
   /* Freeing a column is the strongest structural gain in spider: an empty
      column accepts anything and unpicks any jam. It used to be worth +3,
@@ -834,12 +840,21 @@ function findHints(){
 
   const serialBefore = serial;
   for (const m of moves){
+    const runLen = state.tableau[m.from].length - m.idx;
     const doneBefore = state.done.length;
     applyMove(m.from, m.idx, m.to);
 
     let total = m.score;
     if (state.done.length > doneBefore) total += 50;      // the move closes a run
-    const next = legalMoves();
+
+    /* Moving the same run on again is not a second move, it is the same
+       relocation taking the scenic route, and crediting it made the lookahead
+       prefer the detour: a ten was sent to a lone jack because from there it
+       could later reach the king-queen-jack it should have gone to directly.
+       Two moves, same position, and the hint liked it better. */
+    const landed = state.tableau[m.to].length - runLen;
+    const next = legalMoves().filter(x => !(x.from === m.to && x.idx >= landed));
+
     /* Only positive prospects: the player is not obliged to make a bad next
        move, so a grim future must not sink a good move. */
     if (next.length) total += LOOKAHEAD * Math.max(0, ...next.map(x => x.score));
