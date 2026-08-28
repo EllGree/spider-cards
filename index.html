@@ -1135,28 +1135,38 @@ function snapshot(){
   return map;
 }
 
-/** A copy of a card that has left the table, flying to the slot it completed. */
-function sendOff(was, target, delay){
-  const ghost = document.createElement('div');
+/* Copies of the cards that have left the table, flying off to the slot they
+   filled. Built first, laid out once, then started - same reason as above: a
+   node appended and given its target in one go has no start state to leave. */
+function sendOff(list, target){
   /* Strip the table's markers - a card on its way out is not selected, hinted
      or anything else. Split and filter rather than a regex: an escape in the
      patch that wrote this file turned a word-boundary escape into a literal
      backspace once already. */
   const MARKS = ['sel','drop','hint','weak','target','cursor','movable','flying'];
-  ghost.className = was.cls.split(' ').filter(c => c && !MARKS.includes(c)).join(' ');
-  ghost.style.cssText =
-    'left:' + was.x + 'px; top:' + was.y + 'px;' +
-    'width:' + was.w + 'px; height:' + was.h + 'px;' +
-    'transition:transform ' + COLLECT_MS + 'ms ' + EASE + ', opacity ' + COLLECT_MS + 'ms ease-in;' +
-    'transition-delay:' + delay + 'ms;';
-  $fly.appendChild(ghost);
-  requestAnimationFrame(() => {
-    ghost.style.transform = target
+  const ghosts = list.map((was, i) => {
+    const g = document.createElement('div');
+    g.className = was.cls.split(' ').filter(c => c && !MARKS.includes(c)).join(' ');
+    g.style.cssText =
+      'left:' + was.x + 'px; top:' + was.y + 'px;' +
+      'width:' + was.w + 'px; height:' + was.h + 'px;' +
+      'transition:transform ' + COLLECT_MS + 'ms ' + EASE +
+                ', opacity ' + COLLECT_MS + 'ms ease-in;' +
+      'transition-delay:' + (i * 12) + 'ms;';
+    $fly.appendChild(g);
+    return {g, was, delay: i * 12};
+  });
+  if (!ghosts.length) return;
+
+  void $fly.offsetWidth;
+  for (const {g, was} of ghosts){
+    g.style.transform = target
       ? 'translate(' + (target.x - was.x) + 'px,' + (target.y - was.y) + 'px) scale(.18)'
       : 'scale(.9)';
-    ghost.style.opacity = '0';
-  });
-  setTimeout(() => ghost.remove(), COLLECT_MS + delay + 60);
+    g.style.opacity = '0';
+  }
+  for (const {g, delay} of ghosts)
+    setTimeout(() => g.remove(), COLLECT_MS + delay + 60);
 }
 
 /** Play the difference between `before` and the board as it now stands.
@@ -1189,13 +1199,22 @@ function flip(before, translate){
     m.el.style.transition = 'none';
     m.el.style.transform = 'translate(' + m.dx + 'px,' + m.dy + 'px)';
   }
-  if (moves.length) requestAnimationFrame(() => {
+
+  /* One forced layout, and everything below depends on it. Setting the inverse
+     transform and taking it off again both happen before the next style pass
+     unless something makes the browser commit the first state, and then there
+     is no start value to animate from and the card simply appears at the end.
+     A requestAnimationFrame is not enough: its callbacks run at the top of a
+     frame, still ahead of that frame's style pass, so both writes land in the
+     same one anyway. Reading a layout property is what forces the issue. */
+  if (moves.length){
+    void $board.offsetWidth;
     for (const m of moves){
       m.el.style.transition = 'transform ' + MOVE_MS + 'ms ' + EASE;
       m.el.style.transitionDelay = m.delay + 'ms';
       m.el.style.transform = '';
     }
-  });
+  }
   const last = moves.reduce((a, m) => Math.max(a, m.delay), 0);
   setTimeout(() => {
     for (const m of moves)
@@ -1209,9 +1228,9 @@ function flip(before, translate){
     const slot = $done.children[state.done.length - 1];
     const box = slot && slot.offsetParent ? slot.getBoundingClientRect() : null;
     const target = box ? {x: box.left, y: box.top} : null;
-    let k = 0;
-    for (const [id, was] of before)
-      if (!seen.has(id)) sendOff(was, target, (k++) * 12);
+    const gone = [];
+    for (const [id, was] of before) if (!seen.has(id)) gone.push(was);
+    sendOff(gone, target);
   }
   spawnAt = null;
 }
