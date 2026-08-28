@@ -1842,6 +1842,39 @@ function posKey(){
     state.tableau.map(p => p.map(c => (c.up ? '' : '-') + c.r + ':' + c.s).join(',')).join('/');
 }
 
+/* Nothing worth playing, and the stock is locked behind an empty column: no
+   deal while one stands open. Plug every hole and take the deal, all in the one
+   step.
+
+   All in one step because separately it went round in circles. Filling a column
+   is a move the scoring hates - rightly, an empty column is the most valuable
+   thing on the table - so the cheapest way to fill one is to undo whatever
+   emptied it, and even when that is ruled out, the next move simply empties it
+   again for the +6 that emptying is worth. The two trade the same run back and
+   forth until the repeat guard stops the game. Paid once, with the deal taken
+   immediately, none of that arises.
+
+   Each plug strictly reduces the number of empty columns, since moving a whole
+   column into an empty one is not a legal candidate, so the loop ends. */
+function plugAndDeal(){
+  while (!canDealStock(state)){
+    const snap = structuredClone(state), serialBefore = serial;
+    let picked = null;
+    for (const x of findHints().filter(c => !state.tableau[c.to].length)
+                               .sort((a, b) => b.total - a.total)){
+      applyMove(x.from, x.idx, x.to);
+      const fresh = !autoSeen.has(posKey());
+      state = structuredClone(snap);
+      serial = serialBefore;
+      if (fresh){ picked = x; break; }
+    }
+    if (!picked) return false;
+    move(picked.from, picked.idx, picked.to);
+  }
+  dealStock();
+  return true;
+}
+
 function autoStep(){
   autoTimer = null;
   if (state.done.length === GOAL) return autoStop();
@@ -1854,19 +1887,9 @@ function autoStep(){
   const h = findHints();
   let m = h.length && h[0].total > 0 ? h[0] : null;
 
-  /* An empty column is not only a resource, it is also a lock: no deal while
-     one stands open. So with nothing worth playing and rows still in the stock,
-     fill an empty column - the least bad way of doing it. That is not a good
-     move and it does not score like one, it is simply the price of the deal,
-     and a player pays it without thinking. Left out, the game stopped dead in
-     front of a full stock it was not allowed to touch. */
-  if (!m && state.stock.length && !canDealStock(state))
-    m = h.filter(x => !state.tableau[x.to].length)
-         .sort((a, b) => b.total - a.total)[0] || null;
-
   if (m) move(m.from, m.idx, m.to);
   else if (canDealStock(state)) dealStock();
-  else { autoStop(); render(); return; }
+  else if (!(state.stock.length && plugAndDeal())){ autoStop(); render(); return; }
 
   selection = null;
 
