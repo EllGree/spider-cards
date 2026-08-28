@@ -36,7 +36,9 @@ definition, so runs always move and the rule above never gets in the way.
 
 You do not have to hold any of this in your head, though. Pick a run up and every
 column it may legally land in lights up; if nothing lights up, that run has
-nowhere to go in this position.
+nowhere to go in this position. The **?** button draws the two rules above as
+cards — the same amber and green the table uses, so it is a still frame of the
+game rather than a diagram of it.
 
 ## Controls
 
@@ -53,6 +55,9 @@ Mouse and keyboard share one selection, so you can switch between them mid-move.
 | `Ctrl`+`Z` | undo (all the way back to the deal) |
 | `F2` | new game |
 | `F1` | show this key map |
+
+The **?** button in the toolbar shows the rules. It is drawn, not written, like
+everything else here.
 
 With a pointer: drag a run where it should go, or click once to pick it up and once
 again to drop it. Double-click plays the best available move for that run.

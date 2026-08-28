@@ -40,6 +40,13 @@
      border where it curves. */
   --card-radius: calc(var(--card-w) * 0.05);
 
+  /* Cards in the rules sheet: small, but big enough that the corner index
+     still reads. Comment above the pair, not between them - trailing it off
+     the first line swallowed the second and left --mini-h undefined, which
+     collapsed every card in the sheet to nothing. */
+  --mini-w: 52px;
+  --mini-h: 73px;
+
   --bar-h: 44px;          /* fixed: if the toolbar scaled with the card, its
                              height would feed back into the fit() budget that
                              decides the card size in the first place */
@@ -161,6 +168,11 @@ svg.pip{fill:currentColor; stroke:none}
    table. Portrait only - the narrowest landscape phone is still 568 across.
    Must come after the rule above, or it loses the tie on source order. */
 @media (max-width: 520px){ #done{display:none} }
+
+/* The key map is the next thing to go, and the easiest to give up: a screen
+   this narrow is a phone, and a phone has no F1. The rules button that takes
+   its place is the one a phone player actually needs. */
+@media (max-width: 620px){ #keys{display:none} }
 
 /* ── Table ─────────────────────────────────────────────────────────────── */
 #board{
@@ -306,6 +318,41 @@ svg.pip{fill:currentColor; stroke:none}
 #msg .again svg{width:clamp(22px, 5vmin, 40px); height:clamp(22px, 5vmin, 40px); color:#e8e8e8}
 #msg > div{display:grid; justify-items:center}
 
+/* Rules, drawn rather than written. Two people in a row reached for Klondike's
+   rule - suits alternate - and neither had any way to find out otherwise,
+   because the interface has no words to tell them in. So it tells them in
+   cards, in the vocabulary the table already uses: amber for what lifts, green
+   for where it lands, the tick and the slashed circle from the two endings. */
+#rulebook{cursor:pointer}
+#rulebook > div{
+  background:rgba(20,40,30,.94);
+  border:1px solid rgba(255,255,255,.16); border-radius:14px;
+  padding:20px 22px;
+  max-height:100%; overflow:auto;
+  touch-action:pan-y;
+  /* Needs a width of its own: the sheet centres its child, so the child shrinks
+     to its contents, and auto-fit with nothing to fill collapses to one column
+     no matter how much room the screen has. */
+  width:min(100%, 420px);
+  /* Two columns, deliberately: the two taking panels belong side by side, since
+     the whole point is that they are the same shape with one card's suit
+     changed. The putting panel takes the row under them. */
+  display:grid; grid-template-columns:repeat(2, minmax(0, 1fr));
+  gap:20px 24px; justify-items:center; align-items:end;
+}
+#rulebook .rule:last-child{grid-column:1 / -1}
+#rulebook .rule{display:grid; justify-items:center; gap:12px}
+#rulebook .pair{display:flex; align-items:center; gap:9px}
+#rulebook .stack{position:relative; display:block; width:var(--mini-w)}
+#rulebook .card{
+  width:var(--mini-w); height:var(--mini-h);
+  border-radius:3px; box-shadow:0 1px 3px rgba(0,0,0,.45);
+}
+#rulebook .arrow svg{width:22px; height:22px; opacity:.7}
+#rulebook .verdict svg{width:24px; height:24px}
+#rulebook .yes{color:var(--goal)}
+#rulebook .no{color:#ffb4b4}
+
 /* Key map. Two columns of key-cap + icon; the only text is the key legends
    themselves, which name physical keys and cannot be drawn. */
 #help{cursor:default}
@@ -445,6 +492,7 @@ svg.pip{fill:currentColor; stroke:none}
   <button id="hint" title="Hint (H)" aria-label="Hint"></button>
   <button id="undo" title="Undo (Ctrl+Z)" aria-label="Undo"></button>
   <button id="keys" title="Keyboard map (F1)" aria-label="Keyboard map"></button>
+  <button id="rules" title="Rules" aria-label="Rules"></button>
 </div>
 
 <div id="board"></div>
@@ -453,6 +501,7 @@ svg.pip{fill:currentColor; stroke:none}
 <div id="drag"></div>
 <div id="msg" class="sheet"></div>
 <div id="help" class="sheet" role="dialog" aria-label="Keyboard map"></div>
+<div id="rulebook" class="sheet" role="dialog" aria-label="Rules"></div>
 <div id="over" class="sheet" role="alert" aria-label="No moves left"></div>
 <div id="rotate" class="sheet" role="alert" aria-label="Rotate your device"></div>
 <div id="safe" aria-hidden="true"></div>
@@ -827,7 +876,11 @@ const ICON = {
            '<rect x="4" y="16.5" width="16" height="5" rx="1.5"/>',
   lift:    '<rect x="4" y="11.5" width="16" height="9.5" rx="2"/>' +
            '<path d="M12 8.5v-6"/><polyline points="8.5 6 12 2.5 15.5 6"/>',
-  cancel:  '<circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/>'
+  cancel:  '<circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/>',
+  arrow:   '<path d="M4 12h13"/><polyline points="12.5 7.5 17.5 12 12.5 16.5"/>',
+  rules:   '<circle cx="12" cy="12" r="9"/>' +
+           '<path d="M9.3 9.4a2.85 2.85 0 1 1 3.5 3.35c-.6.2-.85.6-.85 1.2v.55"/>' +
+           '<path d="M11.95 17.3h.02"/>'
 };
 
 const ico = n => '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">' + ICON[n] + '</svg>';
@@ -978,6 +1031,7 @@ const $suits  = document.getElementById('suits');
 const $msg    = document.getElementById('msg');
 const $help   = document.getElementById('help');
 const $over   = document.getElementById('over');
+const $book   = document.getElementById('rulebook');
 const $rotate = document.getElementById('rotate');
 const $safe   = document.getElementById('safe');
 const $drag   = document.getElementById('drag');
@@ -1416,6 +1470,12 @@ addEventListener('keydown', e => {
     return;
   }
 
+  if ($book.classList.contains('on')){
+    e.preventDefault();
+    if (e.key === 'Escape') toggleBook(false);
+    return;
+  }
+
   /* Nothing leaks through an open sheet - and nothing leaks past it to the
      browser either, or Ctrl+Z would reach the browser's own undo. */
   if ($help.classList.contains('on')){
@@ -1562,6 +1622,49 @@ $over.addEventListener('click', e => {
   if (!b) { dismissOver(); return; }         // backdrop
   if (b.id === 'over-undo') undo(); else newGame();
 });
+
+/* ── The rules, in cards ───────────────────────────────────────────────────
+   Three panels, because there are only three things anyone gets wrong, and all
+   three are the same thing seen from different sides: taking is strict about
+   suit, putting could not care less.
+
+     1. one suit, descending  -> the whole run lifts
+     2. a foreign suit in the middle -> only what is below it lifts
+     3. any suit, one rank higher -> it lands
+
+   Amber is what would come away with your finger and green is where it may go,
+   exactly as on the table, so the sheet is a still frame of the game rather
+   than a diagram of it. */
+const MINI_STEP = 17;
+
+function ruleStack(cards){
+  return '<span class="stack" style="height:calc(var(--mini-h) + ' +
+         ((cards.length - 1) * MINI_STEP) + 'px)">' +
+    cards.map(([face, mark], i) =>
+      '<i class="card c-' + face + (mark ? ' ' + mark : '') +
+      '" style="top:' + (i * MINI_STEP) + 'px"></i>').join('') +
+    '</span>';
+}
+
+const rulePanel = (fig, ok) =>
+  '<span class="rule">' + fig +
+  '<span class="verdict ' + (ok ? 'yes' : 'no') + '">' +
+  ico(ok ? 'check' : 'blocked') + '</span></span>';
+
+$book.innerHTML = '<div>' +
+  rulePanel(ruleStack([['9S','sel'], ['8S','sel'], ['7S','sel']]), true) +
+  rulePanel(ruleStack([['9S',''],    ['8H',''],    ['7S','sel']]), false) +
+  rulePanel('<span class="pair">' + ruleStack([['7H','sel']]) +
+            '<span class="arrow">' + ico('arrow') + '</span>' +
+            ruleStack([['8S','drop']]) + '</span>', true) +
+  '</div>';
+
+function toggleBook(on){
+  $book.classList.toggle('on', on === undefined ? !$book.classList.contains('on') : on);
+}
+document.getElementById('rules').innerHTML = ico('rules');
+document.getElementById('rules').addEventListener('click', () => toggleBook());
+$book.addEventListener('click', () => toggleBook(false));
 
 $rotate.innerHTML = '<div>' + ROTATE_ICON +
                     '<span class="dismiss">' + ico('cancel') + '</span></div>';
