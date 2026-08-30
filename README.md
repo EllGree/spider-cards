@@ -117,7 +117,14 @@ also what makes an orientation lock possible at all on Android, where Chrome
 refuses one outside fullscreen. It is hidden where the API is missing, which on an
 iPhone is everywhere: Safari there offers fullscreen to video and nothing else. The
 answer on iOS is Add to Home Screen — the page carries the apple-mobile-web-app
-meta, so it opens with no Safari chrome around it. Pull-to-refresh,
+meta, so it opens with no Safari chrome around it. Android gets the same from
+installing it, which the web app manifest asks for: fullscreen, landscape. The
+manifest is a data: URI in the head rather than a second file, so the game is
+still one .html — the price is that its start_url has to be absolute, which makes
+that the only line in the file that knows where it is published.
+
+The keyboard map button is hidden on touch devices, F1 being of little use there.
+Pull-to-refresh,
 double-tap zoom and the long-press menu are all turned off, because every one of
 them fires on gestures this game needs.
 
