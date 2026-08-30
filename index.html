@@ -556,6 +556,7 @@ svg.pip{fill:currentColor; stroke:none}
   <div id="done" role="img" aria-label="Collected runs"></div>
   <button id="hint" title="Hint (H)" aria-label="Hint"></button>
   <button id="undo" title="Undo (Ctrl+Z)" aria-label="Undo"></button>
+  <button id="full" title="Full screen" aria-label="Full screen" hidden></button>
   <button id="keys" title="Keyboard map (F1)" aria-label="Keyboard map"></button>
   <button id="rules" title="Rules" aria-label="Rules"></button>
 </div>
@@ -968,6 +969,8 @@ const ICON = {
            '<path d="M12 8.5v-6"/><polyline points="8.5 6 12 2.5 15.5 6"/>',
   cancel:  '<circle cx="12" cy="12" r="9"/><path d="M9 9l6 6M15 9l-6 6"/>',
   arrow:   '<path d="M4 12h13"/><polyline points="12.5 7.5 17.5 12 12.5 16.5"/>',
+  expand:  '<path d="M9 3H3v6M15 3h6v6M21 15v6h-6M3 15v6h6"/>',
+  shrink:  '<path d="M3 9h6V3M21 9h-6V3M15 21v-6h6M9 21v-6H3"/>',
   rules:   '<circle cx="12" cy="12" r="9"/>' +
            '<path d="M9.3 9.4a2.85 2.85 0 1 1 3.5 3.35c-.6.2-.85.6-.85 1.2v.55"/>' +
            '<path d="M11.95 17.3h.02"/>'
@@ -2559,14 +2562,55 @@ function lockLandscape(){
 }
 
 let immersed = false;
+/* The address bar and the button bar below it take a third of a phone screen
+   in landscape, and the table is what is left. The fullscreen API takes both
+   away, and on Android it is also the only way an orientation lock is allowed
+   at all - Chrome refuses screen.orientation.lock outside fullscreen, which is
+   why the attempt below has always been wrapped in one.
+
+   Not available on an iPhone: Safari there exposes fullscreen for video and
+   nothing else. The button is hidden when the API is missing rather than left
+   to do nothing, and iOS is served instead by the apple-mobile-web-app meta
+   in the head - added to the home screen, it opens with no Safari chrome at
+   all. Android gets the same from an installed shortcut. */
+const $full = document.getElementById('full');
+const canFull = !!(document.fullscreenEnabled || document.webkitFullscreenEnabled);
+const inFull = () => !!(document.fullscreenElement || document.webkitFullscreenElement);
+
+function paintFull(){
+  if (!canFull) return;
+  $full.innerHTML = ico(inFull() ? 'shrink' : 'expand');
+}
+if (canFull){
+  $full.hidden = false;
+  paintFull();
+  $full.addEventListener('click', () => {
+    if (inFull()){
+      (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+    } else {
+      const el = document.documentElement;
+      const req = el.requestFullscreen || el.webkitRequestFullscreen;
+      try { Promise.resolve(req.call(el, {navigationUI: 'hide'})).then(lockLandscape, lockLandscape); }
+      catch (_){ lockLandscape(); }
+    }
+  });
+  addEventListener('fullscreenchange', paintFull);
+  addEventListener('webkitfullscreenchange', paintFull);
+}
+
+/* One unprompted attempt on the first touch, because a phone player who has
+   never seen the button still wants the room. Only one: the flag used to be
+   set before the request and never cleared, so a single failure - or the
+   player swiping out of fullscreen on purpose - meant it could never be
+   entered again, by this or by anything else. Now the button is always there
+   to go back, and nothing grabs the screen a second time uninvited. */
 function goImmersive(){
-  if (immersed || !coarse) return;
+  if (immersed || !coarse || !canFull) return;
   immersed = true;
   try {
     const el = document.documentElement;
     const req = el.requestFullscreen || el.webkitRequestFullscreen;
-    const p = req ? req.call(el, {navigationUI: 'hide'}) : null;
-    Promise.resolve(p).then(lockLandscape, lockLandscape);
+    Promise.resolve(req.call(el, {navigationUI: 'hide'})).then(lockLandscape, lockLandscape);
   } catch (_){ lockLandscape(); }
 }
 addEventListener('pointerdown', goImmersive);

@@ -109,7 +109,15 @@ some in-app browsers (Telegram's on iOS) never report a rotation and may not per
 one, and a prompt only a rotation can clear would be a dead end with the game
 locked behind it. It also tries to go fullscreen and lock the orientation on first
 tap; browsers that refuse (iOS Safari has no orientation lock at all) simply keep
-the prompt. Pull-to-refresh,
+the prompt.
+
+The address bar and the browser's own buttons can take a third of a phone screen
+in landscape. The toolbar has a fullscreen button that takes them away, and it is
+also what makes an orientation lock possible at all on Android, where Chrome
+refuses one outside fullscreen. It is hidden where the API is missing, which on an
+iPhone is everywhere: Safari there offers fullscreen to video and nothing else. The
+answer on iOS is Add to Home Screen — the page carries the apple-mobile-web-app
+meta, so it opens with no Safari chrome around it. Pull-to-refresh,
 double-tap zoom and the long-press menu are all turned off, because every one of
 them fires on gestures this game needs.
 
