@@ -121,7 +121,9 @@ meta, so it opens with no Safari chrome around it. Android gets the same from
 installing it, which the web app manifest asks for: fullscreen, landscape. The
 manifest is a data: URI in the head rather than a second file, so the game is
 still one .html — the price is that its start_url has to be absolute, which makes
-that the only line in the file that knows where it is published.
+that the only line in the file that knows where it is published. Chrome on Android
+accepts it: it offers to install the page and runs the installed copy fullscreen,
+with no service worker anywhere, which the usual advice says is required.
 
 The keyboard map button is hidden on touch devices, F1 being of little use there.
 Pull-to-refresh,
