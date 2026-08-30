@@ -48,7 +48,12 @@
   /* The card gets its own radius: the SVG rounds its corners at rx=12 on a
      240-wide viewBox, i.e. 5%. Clipping at 9% would eat the artwork's own
      border where it curves. */
-  --card-radius: calc(var(--card-w) * 0.05);
+  /* 12.5/240, not 12/240. The artwork is a 240-unit-wide rounded rect with
+     rx=12 and a black stroke centred on that path, so the outer edge of the
+     ink is an arc of radius 12.5 - half a stroke further out. Clipping at 12
+     shaved that outer half away, and shaved it unevenly, which is what put a
+     chipped look on the corners under a magnifier. */
+  --card-radius: calc(var(--card-w) * 12.5 / 240);
 
   /* Cards in the rules sheet: small, but big enough that the corner index
      still reads. Comment above the pair, not between them - trailing it off
