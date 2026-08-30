@@ -85,7 +85,15 @@ html,body{
 }
 body{
   position:fixed; inset:0;
-  background: radial-gradient(ellipse at 50% 0%, var(--felt) 0%, var(--felt-2) 100%);
+  /* Billiard cloth: a nap and a shaded rim over the green. The nap is an SVG
+     turbulence filter in a data URI rather than a bitmap, so it costs a few
+     hundred bytes, stays as sharp as the screen is, and keeps the file to one
+     piece. Blended with overlay and not multiply - multiply only darkens, and
+     the green went to mud; overlay holds the mid-tone and speckles both ways.
+     Tiled at 300px with stitchTiles, which is what keeps the seams invisible.
+     Painted once per resize, so it costs the animation nothing. */
+  background: radial-gradient(ellipse at 50% 35%, rgba(0,0,0,0) 45%, rgba(0,0,0,.30) 100%), url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.55' numOctaves='5' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.6'/%3E%3C/svg%3E") 0 0/300px 300px repeat, radial-gradient(ellipse at 50% 0%, var(--felt) 0%, var(--felt-2) 100%);
+  background-blend-mode: normal, overlay, normal;
   font: 500 clamp(12px, 1.05vw, 19px)/1.2 ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
   color:#e8e8e8;
   -webkit-user-select:none; user-select:none;
@@ -93,6 +101,7 @@ body{
   -webkit-tap-highlight-color:transparent;
   touch-action:none;
 }
+
 
 /* ── Toolbar. Deliberately poor: no score, no timer, and now no words. ──── */
 #bar{

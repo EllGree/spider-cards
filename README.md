@@ -78,6 +78,10 @@ The interface has no words in it, so here is what the marks mean.
 | a card shaking its head | the move was refused, not lost |
 | blue ring | where the keyboard cursor is |
 
+The cloth and the light on the cards are drawn in CSS - an SVG turbulence
+filter in a data URI for the nap of the baize, a multiplied gradient for the
+sheen on the faces - so there is still nothing to fetch but the one file.
+
 The hint ranks every legal move by a one-move heuristic and shows the best. At two
 moments it looks further instead: when the best move would fill the last empty
 column, and when no move on offer gains anything. Then it searches a few moves ahead
