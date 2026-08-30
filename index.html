@@ -220,50 +220,26 @@ svg.pip{fill:currentColor; stroke:none}
 .card.movable{cursor:grab}
 
 /* ── Sheen ───────────────────────────────────────────────────────────────
-   The faces are white, so a white highlight over them is nothing at all -
-   the first attempt at this was invisible on every card and showed only on
-   the red backs, which was the one place it was not wanted.
+   The faces are white, so a white highlight over them is nothing at all: the
+   first attempt at this was invisible on every card and showed only on the
+   red backs, which was the one place it was not wanted.
 
-   These multiply instead. Under multiply white leaves a pixel alone and a
-   warm grey darkens it, so the gradient runs from white, where the light
-   falls, to ivory in the shade: the card reads as warm paper with a lit
-   edge rather than a white rectangle. It works on the backs too, where it
-   deepens the red instead of frosting it.
+   This multiplies instead. Under multiply white leaves a pixel alone and a
+   warm grey darkens it, so the gradient reads as light falling across warm
+   paper rather than frost over white - a shaded top-left corner, a bright
+   sweep over the face, warm again at the far edge. It suits the backs too,
+   deepening the red instead of fogging it.
 
    It has to be ::before, because ::after is the marker film and the marker
-   has to win. Most of a card is covered by the next one, so the light lives
-   near the top edge, which is the strip a fanned column actually shows.
+   has to win.
 
-   Five to choose from, switched by the class on the body element. */
+   The stops were picked by eye against a moving table, five candidates on
+   the number keys until one of them was clearly right. Adjust them by
+   looking, not by reasoning about them. */
 .card::before{
   content:""; position:absolute; inset:0; border-radius:inherit;
   pointer-events:none; mix-blend-mode:multiply;
-}
-
-/* 1 - Edge: a lit top edge over warm paper. */
-body.sheen-edge .card::before{
-  background:linear-gradient(180deg, #fff 0%, #fdf8ec 4%, #f4ead3 22%, #f1e5c9 100%);
-  box-shadow: inset 0 -2px 4px rgba(150,120,60,.13);
-}
-
-/* 2 - Gloss: a broad diagonal band across the whole face. */
-body.sheen-gloss .card::before{
-  background:linear-gradient(128deg, #fff 0%, #fffdf5 20%, #f2e7cd 52%, #e8dabb 100%);
-}
-
-/* 3 - Glare: a soft light source off the top-left corner. */
-body.sheen-glare .card::before{
-  background:radial-gradient(125% 95% at 8% -12%, #fff 0%, #fdf9ee 28%, #efe2c2 72%, #e9dcba 100%);
-}
-
-/* 4 - Satin: a gentle sweep, lightest across the shoulders. */
-body.sheen-satin .card::before{
-  background:linear-gradient(180deg, #fffdf6 0%, #f7efdb 38%, #f8f1de 58%, #ece0c0 100%);
-}
-
-/* 5 - Ivory: no gradient, just warm stock. */
-body.sheen-ivory .card::before{
-  background:#f6eeda;
+  background:radial-gradient(125% 95% at 8% -12%, #e0d9c6 0%, #fffbef 28%, #fff6e6 58%, #f0e6cf 72% 72%, #f8eccc 100%);
 }
 
 /* A single tinted film is the loudest marker available, because the card's
@@ -562,7 +538,7 @@ body.sheen-ivory .card::before{
 .card.c-2B{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' class='card' face='2B' height='3.5in' preserveAspectRatio='none' viewBox='-120 -168 240 336' width='2.5in'%3E%3Cdefs%3E%3Cpattern id='B2' width='6' height='6' patternUnits='userSpaceOnUse'%3E%3Cpath d='M3 0L6 3L3 6L0 3Z' fill='red'%3E%3C/path%3E%3C/pattern%3E%3C/defs%3E%3Crect width='239' height='335' x='-119.5' y='-167.5' rx='12' ry='12' fill='white' stroke='black'%3E%3C/rect%3E%3Crect fill='url(%23B2)' width='216' height='312' x='-108' y='-156' rx='12' ry='12'%3E%3C/rect%3E%3C/svg%3E")}
 </style>
 </head>
-<body class="sheen-edge">
+<body>
 
 <div id="bar">
   <button id="new" title="New game (F2)" aria-label="New game"></button>
@@ -1835,16 +1811,6 @@ addEventListener('keydown', e => {
       return;
     case 'F1': e.preventDefault(); toggleHelp(); return;
     case 'F2': e.preventDefault(); newGame(); return;
-  }
-
-  /* TEMPORARY - the sheen chooser. 1 to 5 switch it, 0 turns it off, so the
-     five can be compared on a real table instead of in a screenshot. Delete
-     this block, and the four classes not chosen, once one is picked. */
-  if (e.key >= '0' && e.key <= '5'){
-    e.preventDefault();
-    document.body.className =
-      ['', 'sheen-edge', 'sheen-gloss', 'sheen-glare', 'sheen-satin', 'sheen-ivory'][+e.key];
-    return;
   }
 
   if ((e.key === 'z' || e.key === 'Z') && (e.ctrlKey || e.metaKey)){
