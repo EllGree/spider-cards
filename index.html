@@ -15,7 +15,7 @@
 <!-- Declared inline, because a page with no icon makes the browser go and ask
      for one, and on file:// that request is refused as a cross-origin read and
      lands in the console as an error. Same spade the cards are drawn with. -->
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='-620 -620 1240 1240'%3E%3Cpath fill='%23e8e8e8' d='M0 -500C100 -250 355 -100 355 185A150 150 0 0 1 55 185A10 10 0 0 0 35 185C35 385 85 400 130 500L-130 500C-85 400 -35 385 -35 185A10 10 0 0 0 -55 185A150 150 0 0 1 -355 185C-355 -100 -100 -250 0 -500Z'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='-620 -620 1240 1240'%3E%3Cpath fill='%23d93025' d='M0 -500C100 -250 355 -100 355 185A150 150 0 0 1 55 185A10 10 0 0 0 35 185C35 385 85 400 130 500L-130 500C-85 400 -35 385 -35 185A10 10 0 0 0 -55 185A150 150 0 0 1 -355 185C-355 -100 -100 -250 0 -500Z'/%3E%3C/svg%3E">
 <title>Spider</title>
 <style>
 /* ── Everything about appearance lives here. The logic below knows nothing
@@ -218,6 +218,44 @@ svg.pip{fill:currentColor; stroke:none}
 }
 .card.down{box-shadow: 0 1px 2px rgba(0,0,0,.35)}
 .card.movable{cursor:grab}
+
+/* ── Sheen ───────────────────────────────────────────────────────────────
+   The artwork is flat, so the cards read as printed shapes rather than
+   objects on a table. A gradient over the face suggests a lit surface. It
+   has to be ::before, because ::after is the marker film and the marker
+   must win. Most of a card is covered by the next one, so the light lives
+   at the top edge, which is the part a fanned column actually shows.
+
+   Four to choose from, switched by the class on the body element. */
+.card::before{
+  content:""; position:absolute; inset:0; border-radius:inherit;
+  pointer-events:none;
+}
+
+/* Edge: a lit top edge and a thin rim, like glossy card stock. */
+body.sheen-edge .card::before{
+  background:linear-gradient(180deg, rgba(255,255,255,.55) 0%, rgba(255,255,255,.14) 6%, rgba(255,255,255,0) 16%),
+             linear-gradient(0deg, rgba(0,0,0,.07) 0%, rgba(0,0,0,0) 9%);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.30), inset 0 -1px 0 rgba(0,0,0,.10);
+}
+
+/* Gloss: a broad diagonal band across the whole face. */
+body.sheen-gloss .card::before{
+  background:linear-gradient(128deg, rgba(255,255,255,.42) 0%, rgba(255,255,255,.12) 26%,
+                                     rgba(255,255,255,0) 46%, rgba(0,0,0,.05) 100%);
+}
+
+/* Glare: a soft light source off the top-left corner. */
+body.sheen-glare .card::before{
+  background:radial-gradient(120% 90% at 8% -12%, rgba(255,255,255,.50) 0%,
+                             rgba(255,255,255,.16) 30%, rgba(255,255,255,0) 62%);
+}
+
+/* Satin: barely there - a vertical sweep and a shaded foot. */
+body.sheen-satin .card::before{
+  background:linear-gradient(180deg, rgba(255,255,255,.30) 0%, rgba(255,255,255,.05) 24%,
+                                     rgba(255,255,255,0) 55%, rgba(0,0,0,.06) 100%);
+}
 
 /* A single tinted film is the loudest marker available, because the card's
    own background is the artwork and cannot be recoloured. Source and
@@ -515,7 +553,7 @@ svg.pip{fill:currentColor; stroke:none}
 .card.c-2B{background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' class='card' face='2B' height='3.5in' preserveAspectRatio='none' viewBox='-120 -168 240 336' width='2.5in'%3E%3Cdefs%3E%3Cpattern id='B2' width='6' height='6' patternUnits='userSpaceOnUse'%3E%3Cpath d='M3 0L6 3L3 6L0 3Z' fill='red'%3E%3C/path%3E%3C/pattern%3E%3C/defs%3E%3Crect width='239' height='335' x='-119.5' y='-167.5' rx='12' ry='12' fill='white' stroke='black'%3E%3C/rect%3E%3Crect fill='url(%23B2)' width='216' height='312' x='-108' y='-156' rx='12' ry='12'%3E%3C/rect%3E%3C/svg%3E")}
 </style>
 </head>
-<body>
+<body class="sheen-edge">
 
 <div id="bar">
   <button id="new" title="New game (F2)" aria-label="New game"></button>
@@ -1177,11 +1215,12 @@ function pileSteps(pile){
    ═══════════════════════════════════════════════════════════════════════════ */
 
 const MOTION = !matchMedia('(prefers-reduced-motion: reduce)').matches;
-const MOVE_MS = 190, DEAL_STEP_MS = 24, COLLECT_MS = 360;
+const MOVE_MS = 190, DEAL_STEP_MS = 24, OPENING_STEP_MS = 8, COLLECT_MS = 360;
 const EASE = 'cubic-bezier(.2,.7,.3,1)';
 
 let drawnSerial = -1, drawnDone = 0;
 let spawnAt = null;        // origin for cards that were not on the table before
+let dealAll = false;       // a whole new table: fly every card in, one by one
 
 /** Where every card is right now, by id. Cards hidden under a drag are skipped
     so that their ghost in #drag is what gets measured instead - a dropped run
@@ -1222,8 +1261,16 @@ function sendOff(list, target){
 
   void $fly.offsetWidth;
   for (const {g, was} of ghosts){
+    /* Scaled about the top-left corner, because the offset that carries the
+       card to the slot is measured corner to corner. Shrinking about the
+       centre, which is what a transform does unless told otherwise, left the
+       run landing half a card down and to the right of the slot it was aimed
+       at. The scale is the slot's own width over the card's, so the run
+       arrives exactly the size of the mark it becomes. */
+    g.style.transformOrigin = target ? '0 0' : '50% 50%';
     g.style.transform = target
-      ? 'translate(' + (target.x - was.x) + 'px,' + (target.y - was.y) + 'px) scale(.18)'
+      ? 'translate(' + (target.x - was.x) + 'px,' + (target.y - was.y) + 'px)' +
+        ' scale(' + (target.w / was.w).toFixed(4) + ')'
       : 'scale(.9)';
     g.style.opacity = '0';
   }
@@ -1246,10 +1293,15 @@ function flip(before){
      the browser re-lay-out the whole board once per card. */
   const moves = [];
   const rects = live.map(el => el.getBoundingClientRect());
+  /* A new game has no previous position to fly from, and the stock has only
+     just been laid out, so its place is read here rather than before the
+     render the way a deal reads it. */
+  let spawn = spawnAt;
+  if (dealAll){ const r = $stock.getBoundingClientRect(); spawn = {x: r.left, y: r.top}; }
   live.forEach((el, i) => {
     const id = el.dataset.id;
     const fresh = !before.has(id);
-    const was = before.get(id) || (fresh ? spawnAt : null);
+    const was = before.get(id) || (fresh ? spawn : null);
     if (!was) return;
     const r = rects[i];
     const dx = was.x - r.left, dy = was.y - r.top;
@@ -1260,7 +1312,15 @@ function flip(before){
        one move that teleported. */
     const sx = was.w ? was.w / r.width : 1, sy = was.h ? was.h / r.height : 1;
     if (Math.abs(dx) < 1 && Math.abs(dy) < 1 && Math.abs(sx - 1) < .01 && Math.abs(sy - 1) < .01) return;
-    moves.push({el, dx, dy, sx, sy, delay: fresh ? (+el.dataset.pile || 0) * DEAL_STEP_MS : 0});
+    /* A deal gives every column one card, so the columns go in turn. The
+       opening deal gives them five or six each, and going by column would
+       drop whole columns at once; it follows the order the cards were dealt
+       in instead, across the row and then down. */
+    const pile = +el.dataset.pile || 0, idx = +el.dataset.idx || 0;
+    moves.push({el, dx, dy, sx, sy,
+                delay: !fresh ? 0
+                     : dealAll ? (idx * PILES + pile) * OPENING_STEP_MS
+                     : pile * DEAL_STEP_MS});
   });
 
   for (const m of moves){
@@ -1297,7 +1357,7 @@ function flip(before){
   if (state.done.length > drawnDone){
     const slot = $done.children[state.done.length - 1];
     const box = slot && slot.offsetParent ? slot.getBoundingClientRect() : null;
-    const target = box ? {x: box.left, y: box.top} : null;
+    const target = box ? {x: box.left, y: box.top, w: box.width} : null;
     const gone = [];
     for (const [id, was] of before) if (!seen.has(id)) gone.push(was);
     sendOff(gone, target);
@@ -1415,6 +1475,7 @@ function render(before){
      switches off the sliding, not the whole animation - the send-off has to
      survive exactly the move that most often triggers it. */
   if (play) flip(before); else spawnAt = null;
+  dealAll = false;
   drawnSerial = serial;
   drawnDone = state.done.length;
 }
@@ -2531,6 +2592,7 @@ addEventListener('touchmove', e => { if (e.touches.length > 1) e.preventDefault(
 
 function newGame(){
   state = deal(suitCount);
+  dealAll = MOTION;
   history = [];
   selection = null;
   cursor = {pile: 0, idx: -1};
