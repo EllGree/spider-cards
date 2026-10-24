@@ -168,10 +168,18 @@ The game stays one file; the tests read its pure logic (rules, moves, scoring) o
 `index.html` into a sandbox. Node 18 or later, nothing to install:
 
     node --test tests/moves.test.mjs      # target choice, single click, click vs drag
+    node --test tests/autoplay.test.mjs   # the held bulb on reported positions
     node tests/measure.mjs 1 1000         # win rate of "always play the top hint"
+    node tests/autoplay.mjs 2 100         # win rate of the held bulb itself
 
-The second is not a test but the yardstick the scoring is tuned by: run it before and
-after touching `scoreMove()`, on the same deals (it seeds the shuffle), and compare.
+The last two are not tests but yardsticks: `measure.mjs` for the move scoring, run
+before and after touching `scoreMove()`; `autoplay.mjs` for the demonstration's
+policy - when it searches, deals, retreats - which is slower, a quarter of a minute
+a game. Both seed the shuffle, so before and after play the same deals. Positions
+from bug reports load with `position()` in `tests/load.mjs`, from the text format
+the reports use (`3: (5S) (4H) QS JS TH`, face-down in brackets).
+In the browser the same goes through the console - `loadPosition(text)` - and then
+the bulb can be held over the reported position.
 
 ## Credits
 

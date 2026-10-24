@@ -2253,45 +2253,69 @@ function searchCands(){
 }
 
 /* Iterative deepening from `root`. Positions in `avoid` are never offered as
-   an answer - they are where the game has already been. Works on the live
-   state and leaves it wherever it stopped: the caller puts it back. */
-function searchFrom(root, avoid, budget){
+   an answer - they are where the game has already been.
+
+   A generator, so that the demonstration can think in slices and the page
+   stays alive meanwhile: the deepest search runs for seconds, and run in one
+   piece it froze the table for all of them. It works on the live state, so
+   at every pause it puts the real table back - a render() or a touch landing
+   in a pause sees the game, not a position three moves into a plan - and
+   takes its own up again when resumed. It ends with the real table back too. */
+const SEARCH_SLICE = 200;                              // nodes between pauses, ~10 ms
+
+function* searchGen(root, avoid, budget){
+  const home = state, homeSerial = serial;             // never mutated: the search works on clones
   let nodes = 0, best = null;
-  for (let D = 1; D <= SEARCH_DEPTH && nodes < budget; D++){
-    const seen = new Map();                            // hash -> shallowest depth reached
-    const stack = [{snap: root, act: null, cands: null, i: 0, d: 0}];
-    while (stack.length && nodes < budget){
-      const fr = stack[stack.length - 1];
-      if (!fr.cands){ state = structuredClone(fr.snap); fr.cands = fr.d < D ? searchCands() : []; fr.i = 0; }
-      if (fr.i >= fr.cands.length){ stack.pop(); continue; }
-      const x = fr.cands[fr.i++];
-      state = structuredClone(fr.snap);
-      if (x.t === 'm') applyMove(x.from, x.idx, x.to); else dealQuiet();
-      nodes++;
-      const h = posHash(), d = fr.d + 1;
-      if (seen.has(h) && seen.get(h) <= d) continue;
-      seen.set(h, d);
-      const v = worth();
-      if (!avoid.has(h) && (!best || v > best.v || (v === best.v && d < best.path.length)))
-        best = {v, path: stack.slice(1).map(f => f.act).concat([x]), win: state.done.length === GOAL};
-      if (best && best.win) return best;
-      if (d < D) stack.push({snap: structuredClone(state), act: x, cands: null, i: 0, d});
+  try {
+    for (let D = 1; D <= SEARCH_DEPTH && nodes < budget; D++){
+      const seen = new Map();                          // hash -> shallowest depth reached
+      const stack = [{snap: root, act: null, cands: null, i: 0, d: 0}];
+      while (stack.length && nodes < budget){
+        const fr = stack[stack.length - 1];
+        if (!fr.cands){ state = structuredClone(fr.snap); fr.cands = fr.d < D ? searchCands() : []; fr.i = 0; }
+        if (fr.i >= fr.cands.length){ stack.pop(); continue; }
+        const x = fr.cands[fr.i++];
+        state = structuredClone(fr.snap);
+        if (x.t === 'm') applyMove(x.from, x.idx, x.to); else dealQuiet();
+        nodes++;
+        const h = posHash(), d = fr.d + 1;
+        if (seen.has(h) && seen.get(h) <= d) continue;
+        seen.set(h, d);
+        const v = worth();
+        if (!avoid.has(h) && (!best || v > best.v || (v === best.v && d < best.path.length)))
+          best = {v, path: stack.slice(1).map(f => f.act).concat([x]), win: state.done.length === GOAL};
+        if (best && best.win) return best;
+        if (d < D) stack.push({snap: structuredClone(state), act: x, cands: null, i: 0, d});
+        if (nodes % SEARCH_SLICE === 0){
+          const mine = state, mySerial = serial;
+          state = home; serial = homeSerial;
+          yield;
+          state = mine; serial = mySerial;
+        }
+      }
     }
+    return best;
+  } finally {
+    state = home; serial = homeSerial;
   }
-  return best;
+}
+
+/** Runs a thinking generator to the end in one go, for the callers that
+    cannot wait: the hint, and the tests. */
+function finish(gen){
+  for (;;){ const r = gen.next(); if (r.done) return r.value; }
 }
 
 /* A plan from here that leaves the table worth more than it is now, or null.
    `avoid` defaults to the demonstration's visited set; the hint passes its
    own, since nobody is replaying anything there. */
-function planAhead(budget, avoid, bar){
+function* planAheadGen(budget, avoid, bar){
   const here = Math.max(worth(), bar ?? -Infinity);
-  const saved = structuredClone(state), serialBefore = serial;
-  const best = searchFrom(structuredClone(saved), avoid || autoSeen, budget);
-  state = structuredClone(saved);
-  serial = serialBefore;
+  const best = yield* searchGen(structuredClone(state), avoid || autoSeen, budget);
   return best && best.v > here ? best.path : null;
 }
+
+function planAhead(budget, avoid, bar){ return finish(planAheadGen(budget, avoid, bar)); }
 
 /* Out of a stall: search from here, then from one move back, then two, up
    to ESCAPE_UNDO. The plan is the undos it takes to get to that root and the
@@ -2305,26 +2329,53 @@ function planAhead(budget, avoid, bar){
    game, a minute of thinking for a demonstration that used to take two
    seconds. Against the high-water mark every escape is real progress, and
    there can only be so many of those. */
-function escape(){
-  const saved = structuredClone(state), serialBefore = serial;
-  let plan = null;
+function* escape(){
   for (let k = 0; k <= ESCAPE_UNDO && k <= history.length; k++){
-    const root = k === 0 ? saved : history[history.length - k];
-    const best = searchFrom(structuredClone(root), autoSeen, ESCAPE_NODES);
-    if (best && best.v > autoBest){
-      plan = Array(k).fill('undo').concat(best.path);
-      break;
-    }
+    const root = k === 0 ? state : history[history.length - k];
+    const best = yield* searchGen(structuredClone(root), autoSeen, ESCAPE_NODES);
+    if (best && best.v > autoBest) return Array(k).fill('undo').concat(best.path);
   }
-  state = structuredClone(saved);
-  serial = serialBefore;
-  return plan;
+  return null;
 }
 
 /* The move that would put a run into the last empty column. The one decision
    on the table that cannot be taken back, so it is the one worth a search. */
 function fillsLastEmpty(x){
   return !state.tableau[x.to].length && state.tableau.filter(p => !p.length).length === 1;
+}
+
+/* The last thing tried before the demonstration gives up: the same search
+   with a bigger budget, then bigger again. Ordered by score, a line that has
+   to park something in an empty column - a move that scores below zero -
+   sits behind thousands of nodes of better-scored nothing. The reported five
+   moves to two empty columns took 90000 nodes to reach, five seconds and
+   more. Only ever paid at a dead end, and thought in slices like the rest. */
+const SMALL_GAIN = 2, HARDER = [3, 10, 30];
+
+function* planHarder(){
+  for (const k of HARDER){
+    const plan = yield* planAheadGen(SEARCH_NODES * k, autoSeen, autoBest);
+    if (plan) return plan;
+  }
+  return null;
+}
+
+/* The thinking is a generator - autoThink() below - played in slices of
+   about a frame, so the page keeps drawing and answering while a search
+   runs: a touch stops the demonstration mid-thought as it would mid-move.
+   Most steps never pause at all; the first slice is played straight away. */
+const SLICE_MS = 12;
+let autoThinking = null;
+
+function autoSlice(){
+  autoTimer = null;
+  const t0 = performance.now();
+  for (;;){
+    const r = autoThinking.next();
+    if (r.done){ autoThinking = null; return; }
+    if (performance.now() - t0 > SLICE_MS) break;
+  }
+  autoTimer = setTimeout(autoSlice, 0);
 }
 
 function autoStep(){
@@ -2347,6 +2398,11 @@ function autoStep(){
     return;
   }
 
+  autoThinking = autoThink();
+  autoSlice();
+}
+
+function* autoThink(){
   /* The best-scored move that leads somewhere new. The sign is not consulted:
      refusing every move that scored below zero cost three games in four on
      one suit, because parking a run in an empty column is exactly the move
@@ -2354,25 +2410,37 @@ function autoStep(){
      a negative move can do is loop - the same run back and forth, two moves
      round - and that is what the visited set is for. */
   const snap = structuredClone(state), serialBefore = serial;
-  let next = null;
+  let next = null, nextWorth = -Infinity;
   for (const x of findHints()){
     applyMove(x.from, x.idx, x.to);
     const fresh = !autoSeen.has(posHash());
+    if (fresh) nextWorth = worth();
     state = structuredClone(snap);
     serial = serialBefore;
     if (fresh){ next = x; break; }
   }
 
-  /* Two moments to think first. About to spend the last empty column: see
+  /* Three moments to think first. About to spend the last empty column: see
      whether it can earn its keep instead - a plan that leaves the table worth
      more, with the column still empty at the end or a suit gone home, beats a
-     king parked in it. And nothing on offer gains anything: the greedy answer
-     is the least bad move, and the least bad move is how a three-move suit
-     completion gets walked straight past. */
+     king parked in it. Nothing on offer gains anything, or nothing on offer
+     leads anywhere new: the greedy answer is the least bad move, or no answer
+     at all, and that is how a three-move suit completion gets walked straight
+     past - or how the demonstration stopped in front of a five-move line to
+     two empty columns, every hint leading back to where it had been.
+
+     And the best move gains only a little. A small gain is often the first
+     half of the combination taken apart: an ace dropped on a two scores a
+     point, and it is the ace the empty column wanted. Then the plan is played
+     only if it ends worth more than the table after the greedy move. */
   /* Against the game's high-water mark, for the same reason escape() is: a
      plan that only wins back what the greedy move after the last plan gave
      away is the first half of a loop. */
-  let plan = next && (fillsLastEmpty(next) || next.total <= 0) ? planAhead(SEARCH_NODES, autoSeen, autoBest) : null;
+  let plan = null;
+  if (!next || fillsLastEmpty(next) || next.total <= 0)
+    plan = yield* planAheadGen(SEARCH_NODES, autoSeen, autoBest);
+  else if (next.total < SMALL_GAIN)
+    plan = yield* planAheadGen(SEARCH_NODES, autoSeen, Math.max(autoBest, nextWorth));
 
   /* A move that gains nothing is the last resort, not the next thing to try.
      Played whenever it led somewhere new, such moves were a random walk: with
@@ -2387,8 +2455,9 @@ function autoStep(){
     if (gains){ move(next.from, next.idx, next.to); played = true; }
     else if (canDealStock(state)){ dealStock(); played = true; }
     else if (state.stock.length && plugAndDeal()) played = true;
-    if (!played) plan = escape();
+    if (!played) plan = yield* escape();
     if (!played && !plan && next){ move(next.from, next.idx, next.to); played = true; }
+    if (!played && !plan) plan = yield* planHarder();
   }
 
   if (plan){
@@ -2421,6 +2490,7 @@ function autoStop(){
   if (!autoTimer && !$hint.classList.contains('auto')) return;
   clearTimeout(autoTimer);
   autoTimer = null;
+  autoThinking = null;   // abandoned at a pause, where the real table is in place
   autoQueue = [];
   $hint.classList.remove('auto');
 }
@@ -2762,6 +2832,41 @@ function newGame(){
   $over.classList.remove('on');
   render();
 }
+
+/* For the console, not the player: set up a position from the text format
+   bug reports use - one line per column, "3: (5S) (4H) QS JS TH 9H", face-down
+   cards in brackets, T for ten - so that a reported stall can be replayed with
+   the bulb held. The stock comes out empty and the collected suits are
+   whatever the table is missing. tests/load.mjs has the same for the tests. */
+window.loadPosition = function(text){
+  const R = {A: 1, T: 10, J: 11, Q: 12, K: 13}, S = {S: 0, H: 1, D: 2, C: 3};
+  const tableau = Array.from({length: PILES}, () => []);
+  for (const line of text.split('\n')){
+    const m = line.match(/^\s*(\d)\s*:(.*)$/);
+    if (!m) continue;
+    tableau[+m[1]] = m[2].trim().split(/\s+/).filter(Boolean).map(t => {
+      const down = t.startsWith('(');
+      const k = t.replace(/[()]/g, '');
+      return {r: R[k[0]] ?? +k.slice(0, -1), s: S[k.at(-1)], up: !down, id: 'c' + (++uid)};
+    });
+  }
+  const used = new Set(tableau.flat().map(c => c.s));
+  const suits = used.has(2) || used.has(3) ? 4 : used.has(1) ? 2 : 1;
+  const count = [0, 0, 0, 0];
+  for (const c of tableau.flat()) count[c.s]++;
+  const done = [];
+  for (let s = 0; s < suits; s++)
+    for (let k = 0; k < (104 / suits - count[s]) / 13; k++) done.push(s);
+  autoStop();
+  state = {suits, tableau, stock: [], done};
+  history = []; selection = null; lastMove = null;
+  cursor = {pile: 0, idx: -1};
+  serial++;
+  hints = []; hintPos = -1; hintSerial = -1;
+  $msg.classList.remove('on');
+  $over.classList.remove('on');
+  render();
+};
 
 buildSuits();
 checkOrientation();
