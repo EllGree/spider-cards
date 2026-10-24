@@ -179,7 +179,8 @@ a game. Both seed the shuffle, so before and after play the same deals. Position
 from bug reports load with `position()` in `tests/load.mjs`, from the text format
 the reports use (`3: (5S) (4H) QS JS TH`, face-down in brackets).
 In the browser the same goes through the console - `loadPosition(text)` - and then
-the bulb can be held over the reported position.
+the bulb can be held over the reported position. Reported positions, and one whole game
+with the line a human played out of an autopilot stall, are in `tests/fixtures/`.
 
 ## Credits
 
