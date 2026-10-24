@@ -48,7 +48,8 @@ Mouse and keyboard share one selection, so you can switch between them mid-move.
 | --- | --- |
 | `←` `→` | move across the columns, and onto the stock past the last one |
 | `↑` `↓` | move up and down inside a column |
-| `Enter` | pick up the run under the cursor, or put down what you are holding; on the stock, deal |
+| `Enter` | play the best move for the run under the cursor, same as a click; on the stock, deal |
+| `Shift`+`Enter` | pick up the run under the cursor, or put down what you are holding — the exact move |
 | `Esc` | drop what you are holding |
 | `Space` | deal a row from the stock |
 | `H` | hint — press again to walk through the ranked alternatives |
@@ -61,8 +62,11 @@ wrong, drawn as cards in the table's own colours, with a line of text under each
 Words are allowed on that one sheet and nowhere else — two testers in a row read
 the pictures alone and still guessed at the rule.
 
-With a pointer: drag a run where it should go, or click once to pick it up and once
-again to drop it. Double-click plays the best available move for that run.
+With a pointer: click a card and its run goes to the best column for it — the one
+the hint would pick, keeping suits together. A click only plays a move that improves
+the table and never simply undoes the move before it; when there is nothing worth
+playing, the card shakes. To put a run somewhere a click would not, drag it there.
+A press that travels less than 5 px counts as a click, however long it is held.
 
 ## Reading the table
 
@@ -157,6 +161,17 @@ Cards move by FLIP: since every render throws the board away and builds a new on
 each card carries an id from the deal, and the animation measures where each id was,
 lets the rebuild happen, measures again, and plays the difference. Only transforms
 are animated, never layout. `prefers-reduced-motion` turns the whole thing off.
+
+## Tests
+
+The game stays one file; the tests read its pure logic (rules, moves, scoring) out of
+`index.html` into a sandbox. Node 18 or later, nothing to install:
+
+    node --test tests/moves.test.mjs      # target choice, single click, click vs drag
+    node tests/measure.mjs 1 1000         # win rate of "always play the top hint"
+
+The second is not a test but the yardstick the scoring is tuned by: run it before and
+after touching `scoreMove()`, on the same deals (it seeds the shuffle), and compare.
 
 ## Credits
 

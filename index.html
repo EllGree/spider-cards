@@ -625,6 +625,7 @@ const STOCK_POS = PILES;  // one past the last column: the cursor may rest on th
 let state = null;
 let history = [];         // snapshot stack for undo
 let selection = null;     // {pile, idx} - the run the player is holding
+let lastMove = null;      // {from, to, id} of the last move played; see reverses()
 let cursor = {pile: 0, idx: -1};   // where the keyboard is looking
 let serial = 0;           // bumped by any change of position; invalidates the hint list
 
@@ -723,6 +724,7 @@ function undo(){
   if (!history.length) return;
   state = history.pop();
   selection = null;
+  lastMove = null;
   serial++;
   render();
 }
@@ -733,6 +735,7 @@ function move(from, idx, to){
   if (!canDrop(state, state.tableau[from][idx], to)) return false;
 
   push();
+  lastMove = {from, to, id: state.tableau[from][idx].id};
   applyMove(from, idx, to);
   return true;
 }
@@ -752,6 +755,7 @@ function dealStock(){
   const r = $stock.getBoundingClientRect();
   spawnAt = {x: r.left, y: r.top};
   push();
+  lastMove = null;
   const row = state.stock.pop();
   for (let i = 0; i < PILES; i++){
     const c = row[i];
@@ -789,8 +793,8 @@ function collect(p){
 
 /* ═══════════════════════════════════════════════════════════════════════════
    4. SCORING A MOVE
-   One function serves both the hint and the double click, so the two can
-   never disagree about what a good move is.
+   One function serves the hint, the autopilot and the single click, so they
+   can never disagree about what a good move is.
 
    Returns null when a move is physically pointless, a number otherwise.
    The main filter is "the run already sits on its own suit": moving S2-SA
@@ -812,23 +816,56 @@ function tailRun(pile){
   return n;
 }
 
-function scoreMove(from, idx, to){
-  const pile = state.tableau[from], dst = state.tableau[to];
+/* Pure: reads only `st`, so the hint, the autopilot, the search and the
+   single click all rank a move by the same arithmetic.
+
+   The fractional terms only break ties between targets of the same run, in
+   this order: the longer own-suit run the move joins (baseScore caps that
+   length at four, so a run of five and a run of nine would otherwise tie),
+   then the nearest column, then the leftmost. Each band is wider than all the
+   bands below it put together, and all of them together stay under one
+   point, so they never reorder moves that score differently. */
+function scoreMove(st, from, idx, to){
+  const sc = baseScore(st, from, idx, to);
+  if (sc === null) return null;
+  const dst = st.tableau[to], top = dst.length ? dst[dst.length - 1] : null;
+  const run = top && top.s === st.tableau[from][idx].s ? tailRun(dst) : 0;   // 0..12
+  return sc + 0.07 * run - 0.005 * Math.abs(to - from) - 0.0001 * to;
+}
+
+function baseScore(st, from, idx, to){
+  const pile = st.tableau[from], dst = st.tableau[to];
   const head = pile[idx];
   const under = idx > 0 ? pile[idx - 1] : null;
+  const top = dst.length ? dst[dst.length - 1] : null;
 
-  /* 1. The run already rests on the next card up in its own suit.
+  /* 1. The run already rests on the next card up in its own suit - a suited
+     join that the move would take apart.
 
-     Usually that is shuffling from nowhere to nowhere. But NOT always: if the
-     destination has a longer run of the same suit underneath that same card,
-     this is progress. The extreme case is H3-H2-HA lifted off a lone H4 and
-     dropped onto an H4 that has HK..H5 below it - the move closes the whole
-     run and clears it off the table. An early version of this rule killed
-     exactly that move.
+     Onto a card of another suit (or into an empty column) that join is lost
+     for nothing: the board gets strictly worse. Such a move ranks below
+     every move that keeps its joins - null, the same as pointless. It stays
+     playable by drag, where the player names the target. This used to
+     compare the run lengths without looking at the suit there, so 7H-6H-5H
+     lifted off an 8H preferred a spade 8 with a long spade run under it to
+     the other 8H - the one target that kept the hearts together.
 
-     So compare the length of the own-suit run here against the one there. */
+     Onto the next card up in the SAME suit, the join survives the move.
+     Compare the own-suit run it will be part of there against the one here:
+       - longer there: progress, scored in full below. The extreme case is
+         H3-H2-HA lifted off a lone H4 onto an H4 with HK..H5 below it - the
+         move closes the whole run and clears it off the table. An early
+         version of this rule killed exactly that move.
+       - just as long: nothing lost, and the two columns are now arranged
+         differently, which is often what the next combination needs. A small
+         plus, so a click plays it rather than refusing.
+       - shorter there: the run is taken apart further than it was. Null. */
   if (under && under.up && under.s === head.s && under.r === head.r + 1){
-    if (tailRun(dst) <= tailRun(pile.slice(0, idx))) return null;
+    if (!top || top.s !== head.s) return null;
+    const there = tailRun(dst) + (pile.length - idx);
+    const here = tailRun(pile);
+    if (there < here) return null;
+    if (there === here) return 1;
   }
   // 2. Moving from one empty column into another.
   if (dst.length === 0 && idx === 0) return null;
@@ -906,7 +943,7 @@ function legalMoves(){
       if (!isMovableRun(state, from, i)) continue;
       for (let to = 0; to < PILES; to++){
         if (to === from || !canDrop(state, pile[i], to)) continue;
-        const score = scoreMove(from, i, to);
+        const score = scoreMove(state, from, i, to);
         if (score !== null) out.push({from, idx:i, to, score});
       }
     }
@@ -939,6 +976,100 @@ function findHints(){
      position, but shown. Staying silent on a position with nine legal moves
      is worse than offering a weak one. */
   return scored.sort((a, b) => b.total - a.total);
+}
+
+/* ── The single click ──────────────────────────────────────────────────────
+   A click (or Enter) on a card plays the best-ranked move for the run it
+   starts - by scoreMove(), the same ranking the hint uses - and only a move
+   that improves the board: a score strictly above zero. A move that gains
+   nothing, or takes a suited run apart, is not something to do on a reflex;
+   it stays available by drag, where the player names the target.
+
+   Pointer down and up count as a click when the pointer travelled less than
+   CLICK_SLOP pixels in between, however long it was held; anything further
+   is a drag. */
+const CLICK_SLOP = 5;
+
+function isClickGesture(dx, dy){
+  return Math.hypot(dx, dy) < CLICK_SLOP;
+}
+
+/** Would this move put back exactly what the previous move did - the same
+    card, back from where it went to where it came from? A safety net against
+    a click bouncing a run between two equally good columns: the scoring can
+    rate both directions the same, and two clicks would then undo each other
+    for ever. */
+function reverses(st, from, idx, to, last){
+  return !!last && from === last.to && to === last.from &&
+         st.tableau[from][idx] && st.tableau[from][idx].id === last.id;
+}
+
+/** The column a click on (from, idx) sends the run to, or null.
+
+    First choice: the best move that improves the board by itself.
+
+    Failing that, a set-up move: one that costs something on its own - most
+    often parking a run in an empty column - but makes room for a move that
+    pays more than it cost. Lifting J-10-9 of spades off a 6 of spades into
+    the empty column scores below zero, yet it lets 5-4-3 of spades land on
+    that 6 and clears their column. A player sees that at a glance, and the
+    click used to answer it with a shake.
+
+    The follow-up has to come out of, or land on, the column the run just left
+    - the room the set-up made. Otherwise any good move elsewhere on the table
+    would excuse any click. This is one move of lookahead for the click alone;
+    the hint and the demonstration have their own search for combinations, and
+    their ranking is untouched by it. */
+function clickTarget(st, from, idx, last){
+  if (!isMovableRun(st, from, idx)) return null;
+  let best = null, bestScore = 0;                     // strictly positive only
+  let setup = null, setupNet = 0;
+  for (let to = 0; to < PILES; to++){
+    if (to === from || !canDrop(st, st.tableau[from][idx], to)) continue;
+    if (reverses(st, from, idx, to, last)) continue;
+    const sc = scoreMove(st, from, idx, to);
+    if (sc !== null && sc > bestScore){ bestScore = sc; best = to; }
+    if (best === null){
+      const net = (sc === null ? -10 : sc) + bestFollowUp(st, from, idx, to);
+      if (net > setupNet){ setupNet = net; setup = to; }
+    }
+  }
+  return best !== null ? best : setup;
+}
+
+/** The position after a move, without touching the live game: the run moved
+    and the card it uncovered turned over. Completed runs are not collected -
+    for weighing a follow-up that changes nothing. */
+function afterPure(st, from, idx, to){
+  const next = structuredClone(st);
+  const run = next.tableau[from].splice(idx);
+  next.tableau[to].push(...run);
+  const src = next.tableau[from];
+  if (src.length && !src[src.length - 1].up) src[src.length - 1].up = true;
+  return next;
+}
+
+/** The best score of a move made possible by moving (from, idx) to `to`: a
+    run lifted from the column it left, or dropped onto it. 0 if none. The
+    move straight back is not a follow-up. */
+function bestFollowUp(st, from, idx, to){
+  const id = st.tableau[from][idx].id;
+  const next = afterPure(st, from, idx, to);
+  const back = {from, to, id};
+  let top = 0;
+  for (let p = 0; p < PILES; p++){
+    const pile = next.tableau[p];
+    for (let i = 0; i < pile.length; i++){
+      if (!isMovableRun(next, p, i)) continue;
+      for (let q = 0; q < PILES; q++){
+        if (q === p || (p !== from && q !== from)) continue;
+        if (!canDrop(next, pile[i], q) || reverses(next, p, i, q, back)) continue;
+        const sc = scoreMove(next, p, i, q);
+        if (sc !== null && sc > top) top = sc;
+      }
+    }
+  }
+  return top;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1582,7 +1713,7 @@ $board.addEventListener('pointerdown', e => {
 $board.addEventListener('pointermove', e => {
   if (!drag) return;
   if (!drag.moved){
-    if (Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) < 4) return;
+    if (isClickGesture(e.clientX - drag.x0, e.clientY - drag.y0)) return;
     drag.moved = true;
     // lift the run into its own layer
     const run = state.tableau[drag.from].slice(drag.idx);
@@ -1618,7 +1749,12 @@ $board.addEventListener('pointerup', e => {
   if (!drag) return;
   const d = drag; drag = null;
 
-  if (!d.moved){ $drag.innerHTML = ''; click(d.from, d.idx); return; }
+  /* Click or drag is decided by where the pointer came up, not only by the
+     moves seen on the way: a fast flick can travel the whole distance between
+     two pointermove events, or with none at all, and still be a drop. */
+  if (!d.moved && isClickGesture(e.clientX - d.x0, e.clientY - d.y0)){
+    $drag.innerHTML = ''; click(d.from, d.idx); return;
+  }
 
   /* Measured with the ghost still up and the originals still hidden, so the run
      flies the last inch from the finger instead of teleporting back to its old
@@ -1671,72 +1807,29 @@ function pileUnder(x){
   return away <= L.cardW ? nearest : null;
 }
 
-/* Where a run "obviously" wants to go, for the double click.
-
-   scoreMove() returning null means "this move is pointless" - a run shuffled
-   from one card to an identical one, gaining nothing. That is the right thing
-   to hide from the hint, which is advice. It is the wrong thing to refuse from
-   the player, who pointed at a card and is waiting for it to move, and it used
-   to be refused: with every target scoring null this returned null and the
-   double click did nothing at all, silently. On a real table that was 29% of
-   the runs that had somewhere legal to go.
-
-   So there are two tiers. Take the best-scoring target if there is one;
-   otherwise take any legal one, because legal is what the player was promised -
-   the same canDrop() that lights the column up under markDrops(). The
-   tie-break only decides where a pointless move lands: onto its own suit
-   first, then any occupied column, and an empty column last, since an empty
-   column is the one resource not worth spending on a shuffle. */
-function bestTarget(from, idx){
-  const head = state.tableau[from][idx];
-  let best = null, bestScore = -Infinity;
-  let fallback = null, fallbackRank = -Infinity;
-
-  for (let to = 0; to < PILES; to++){
-    if (to === from || !canDrop(state, head, to)) continue;
-
-    const dst  = state.tableau[to];
-    const rank = dst.length === 0 ? 0
-               : (dst[dst.length - 1].s === head.s ? 2 : 1);
-    if (rank > fallbackRank){ fallbackRank = rank; fallback = to; }
-
-    const sc = scoreMove(from, idx, to);
-    if (sc === null) continue;
-    if (sc > bestScore){ bestScore = sc; best = to; }
-  }
-  return best !== null ? best : fallback;
-}
-
-/** Double click is detected here rather than natively: a real dblclick would
-    arrive only after the click handler had already toggled the selection
-    twice. */
-const DBL_MS = 350;
-let lastClick = {p:-1, i:-1, t:-1e9};
-
-/** Click-click: the first picks a run up, the second puts it down. A double
-    click plays the move outright. */
+/** A click on a card. While a run is held (picked up from the keyboard with
+    Shift+Enter) a click on another column puts it down there, as before.
+    Otherwise the click plays the run's best move - see clickTarget() - or,
+    if there is no move worth playing, shakes the run and changes nothing.
+    It used to be the double click that played a move and the single click
+    that picked a run up; the double click is gone. */
 function click(p, i){
   cursor = {pile: p, idx: i};
-  const now = performance.now();
-  if (p === lastClick.p && i === lastClick.i && now - lastClick.t < DBL_MS){
-    lastClick.t = -1e9;
-    if (isMovableRun(state, p, i)){
-      const to = bestTarget(p, i);
-      if (to !== null && move(p, i, to)){ selection = null; render(); return; }
-      /* Nowhere to go. Say so and keep the run in hand - dropping the selection
-         without a word is what made this look like a broken double click. */
-      render(); refuse(p, i); return;
-    }
-    selection = null; render(); return;
-  }
-  lastClick = {p, i, t: now};
-
   if (selection){
-    if (selection.pile === p){ selection = null; render(); return; }
-    if (move(selection.pile, selection.idx, p)){ selection = null; render(); return; }
+    const held = selection;
+    selection = null;
+    if (held.pile !== p) move(held.pile, held.idx, p);
+    render();
+    return;
   }
-  selection = isMovableRun(state, p, i) ? {pile:p, idx:i} : null;
+  const to = clickTarget(state, p, i, lastMove);
+  if (to !== null && move(p, i, to)){
+    cursor = {pile: to, idx: state.tableau[to].length - 1};
+    render();
+    return;
+  }
   render();
+  if (i >= 0 && state.tableau[p][i]) refuse(p, i);
 }
 
 // clicking an empty column: there is no .card there, so it needs its own path
@@ -1777,15 +1870,22 @@ function moveCursor(dp, di){
   render();
 }
 
-/** Enter. On the stock it deals; on a column it picks the run up, or puts
-    down whatever is already held. */
-function activate(){
+/** Enter. On the stock it deals; on a card it does exactly what a click on
+    that card does. Shift+Enter is the keyboard's drag: it picks the run up,
+    and on another column puts down whatever is held - the exact move, for
+    the targets a click will not choose. */
+function activate(exact){
   if (cursor.pile === STOCK_POS){
     if (dealStock()) selection = null;
     render();
     return;
   }
   const p = cursor.pile, i = cursor.idx;
+  if (!exact){
+    if (selection || i >= 0) click(p, i);
+    else render();
+    return;
+  }
   if (selection){
     if (selection.pile === p) selection = null;          // same column cancels
     else if (move(selection.pile, selection.idx, p)) selection = null;
@@ -1830,7 +1930,7 @@ addEventListener('keydown', e => {
     case 'ArrowRight': e.preventDefault(); moveCursor(+1, 0); return;
     case 'ArrowUp':    e.preventDefault(); moveCursor(0, -1); return;
     case 'ArrowDown':  e.preventDefault(); moveCursor(0, +1); return;
-    case 'Enter':      e.preventDefault(); activate(); return;
+    case 'Enter':      e.preventDefault(); activate(e.shiftKey); return;
     case 'Escape':     e.preventDefault(); if (selection){ selection = null; render(); } return;
     case ' ': case 'Spacebar':
       e.preventDefault();
@@ -2003,7 +2103,7 @@ function plugCandidates(){
       if (!isMovableRun(state, p, i)) continue;
       for (let to = 0; to < PILES; to++){
         if (to === p || state.tableau[to].length) continue;
-        const sc = scoreMove(p, i, to);
+        const sc = scoreMove(state, p, i, to);
         out.push({from: p, idx: i, to, total: sc === null ? -100 : sc, len: pile.length - i});
       }
     }
@@ -2137,7 +2237,7 @@ function searchCands(){
       for (let to = 0; to < PILES; to++){
         if (to === p || !canDrop(state, pile[i], to)) continue;
         if (i === 0 && !state.tableau[to].length) continue;
-        const sc = scoreMove(p, i, to);
+        const sc = scoreMove(state, p, i, to);
         c.push({t: 'm', from: p, idx: i, to,
                 sc: (sc === null ? -10 : sc) + (uncoversWanted(p, i) ? 12 : 0)});
       }
@@ -2352,7 +2452,8 @@ document.getElementById('new').addEventListener('click', newGame);
 const KEYMAP = [
   [['&larr;', '&rarr;'], 'cols'],
   [['&uarr;', '&darr;'], 'rows'],
-  [['&crarr;'],          'lift'],
+  [['&crarr;'],          'arrow'],
+  [['Shift', '&crarr;'], 'lift'],
   [['Esc'],              'cancel'],
   [['Space'],            'deal'],
   [['H'],                'bulb'],
@@ -2515,7 +2616,11 @@ function apply(box, k){
   const h = box.offsetHeight;
   box.style.transformOrigin = 'top center';
   box.style.transform = 'scale(' + k.toFixed(3) + ')';
-  box.style.marginBottom = Math.max(0, (k - 1) * h).toFixed(1) + 'px';
+  /* Negative when the box is scaled down: the transform shrinks what is drawn,
+     not the space the layout keeps for it, so that space has to be given back
+     or the sheet scrolls by the difference. It did - 11px in a phone held
+     sideways, which grew to 46 when the key list got its tenth row. */
+  box.style.marginBottom = ((k - 1) * h).toFixed(1) + 'px';
 }
 
 function toggleBook(on){
@@ -2649,6 +2754,7 @@ function newGame(){
   dealAll = MOTION;
   history = [];
   selection = null;
+  lastMove = null;
   cursor = {pile: 0, idx: -1};
   serial++;
   hints = []; hintPos = -1; hintSerial = -1;
